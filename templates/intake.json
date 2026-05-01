@@ -1,0 +1,9 @@
+{
+  "title": "Название книги",
+  "subject": "Тема",
+  "thesis": "Центральный тезис в 1-3 предложения",
+  "target_word_count": 70000,
+  "target_chapters": 16,
+  "language": "ru",
+  "audience": "широкая, но интеллектуальная"
+}

@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "book": "Название книги",
+    "version": "1.0",
+    "last_updated": "YYYY-MM-DD"
+  },
+  "facts": [
+    {
+      "id": "fact_001",
+      "category": "date",
+      "claim": "Конкретная дата или период",
+      "source_type": "primary",
+      "source_ref": "Первоисточник или авторитетное исследование",
+      "confidence": "high",
+      "verified": true,
+      "verification_method": "peer_review|primary_source|search_harvester"
+    },
+    {
+      "id": "fact_002",
+      "category": "name",
+      "claim": "Имя исторической личности или организации",
+      "source_type": "secondary",
+      "source_ref": "Учёбник или монография",
+      "confidence": "medium",
+      "verified": false,
+      "verification_note": "Требует подтверждения через Search Harvester перед включением в текст"
+    },
+    {
+      "id": "fact_003",
+      "category": "event",
+      "claim": "Конкретное событие с датой и участниками",
+      "source_type": "primary",
+      "source_ref": "Архивный документ или хроника",
+      "confidence": "high",
+      "verified": true,
+      "verification_method": "primary_source"
+    }
+  ]
+}
