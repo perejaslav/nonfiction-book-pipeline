@@ -914,6 +914,21 @@ curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
 
 To publish the finished pipeline (or any derived book project) as a public repo:
 
+**Repository location guard.** NFP may exist in more than one local checkout: a public/app clone under `/root/apps/nonfiction-book-pipeline` and the live Hermes skill clone under `~/.hermes/skills/software-development/nonfiction-book-pipeline`. Before committing, inspect both (or all candidates) and push from the clone that contains the real changes:
+
+```bash
+for r in /root/apps/nonfiction-book-pipeline ~/.hermes/skills/software-development/nonfiction-book-pipeline; do
+  [ -d "$r/.git" ] || continue
+  echo "--- $r"
+  git -C "$r" fetch origin
+  git -C "$r" status --short --branch
+  git -C "$r" log --oneline --decorate --max-count=4
+  git -C "$r" ls-files --others --exclude-standard | sed 's/^/?? /'
+done
+```
+
+If `/root/apps/...` is stale or diverged after a remote force-update, do not reset it just to make the push easier; use the live skill repo for the skill changes and leave stale clones untouched unless the user confirms cleanup.
+
 1. **Prepare local structure** (README, LICENSE, .gitignore, docs/, templates/, examples/, scripts/).
 2. **Create repo via GitHub API:**
    ```bash
