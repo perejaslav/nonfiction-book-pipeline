@@ -1,13 +1,13 @@
 # NonFiction Pipeline (NFP)
 
-> Многостадийный pipeline для создания научно-популярных книг с помощью параллельных субагентов.
+> Многостадийный pipeline для создания научно-популярных книг с помощью Hermes Agent и параллельных субагентов.
 
-NFP разбивает написание книги объёмом 60–80K слов на 5 этапов: **Intake → Foundation → Drafting → Expansion → Assembly**. Каждый этап производит конкретные артефакты на диске и проверяемый результат.
+NFP разбивает написание книги объёмом примерно 60–100K слов на 5 этапов: **Intake → Foundation → Drafting → Expansion → Assembly**. Каждый этап производит конкретные артефакты на диске и проверяемый результат.
 
 Этот репозиторий — одновременно:
 
 - **источник истины** для skill `nonfiction-book-pipeline`;
-- **набор шаблонов и инструкций** для запуска нового книжного проекта.
+- **набор шаблонов и рабочих инструкций** для запуска нового книжного проекта.
 
 ---
 
@@ -15,19 +15,23 @@ NFP разбивает написание книги объёмом 60–80K с�
 
 Основные части:
 
-- `SKILL.md` — сам skill Hermes Agent
-- `references/` — рабочие процедуры, проверки, чистка, публикация
-- `templates/` — шаблоны для проекта книги
-- `examples/` — примерные материалы на основе книги о Венеции
+- `SKILL.md` — сам skill Hermes Agent и полное рабочее руководство
+- `references/` — процедуры, проверки, диагностика, чистка, публикация
+- `templates/` — шаблоны foundation-файлов для нового проекта книги
 - `README.en.md` — английская версия этого файла
 
-Типичный результат работы pipeline:
+Примерные материалы по Венеции лежат не в отдельной папке `examples/`, а в `references/`:
+
+- `references/example-thesis-venice.md`
+- `references/example-structure-venice.md`
+
+Типичный результат работы pipeline в директории конкретной книги:
 
 - `intake.json` — карточка проекта
-- `foundation/` — тезис, план, voice, термины, факты
+- `foundation/` — тезис, структура, voice, термины, факты и дополнительные фактологические реестры
 - `chapters/` — главы книги
-- `drafts/manuscript.md` — собранная рукопись
-- `drafts/book.pdf` — финальный PDF, если установлены pandoc и LaTeX
+- `manuscript.md` — собранная рукопись
+- `book.pdf` — финальный PDF, если установлены pandoc, XeLaTeX и шрифты
 
 ---
 
@@ -35,7 +39,9 @@ NFP разбивает написание книги объёмом 60–80K с�
 
 ### Шаг 1. Убедитесь, что установлен Hermes Agent
 
-Если Hermes ещё не установлен — следуйте [официальной документации](https://hermes-agent.nousresearch.com/docs).
+Если Hermes ещё не установлен — следуйте официальной документации:
+
+https://hermes-agent.nousresearch.com/docs
 
 Проверьте запуск:
 
@@ -52,23 +58,23 @@ cd nonfiction-book-pipeline
 
 ### Шаг 3. Установите pipeline как skill
 
-Hermes автоматически видит файлы из `~/.hermes/skills/`. Проще всего сделать симлинк или копию.
+Hermes видит skill-файлы из `~/.hermes/skills/`. Проще всего сделать симлинк или копию.
 
 **Вариант A — симлинк, удобнее для обновлений:**
 
 ```bash
 mkdir -p ~/.hermes/skills/software-development
-ln -s $(pwd) ~/.hermes/skills/software-development/nonfiction-book-pipeline
+ln -s "$(pwd)" ~/.hermes/skills/software-development/nonfiction-book-pipeline
 ```
 
 **Вариант B — копирование:**
 
 ```bash
 mkdir -p ~/.hermes/skills/software-development/nonfiction-book-pipeline
-cp -r . ~/.hermes/skills/software-development/nonfiction-book-pipeline
+rsync -a --exclude .git ./ ~/.hermes/skills/software-development/nonfiction-book-pipeline/
 ```
 
-> Категория `software-development` не критична, но так skill удобнее держать в одной структуре.
+> Категория `software-development` не критична, но так skill удобно держать в общей структуре.
 
 ### Шаг 4. Проверьте, что skill подхватился
 
@@ -76,20 +82,20 @@ cp -r . ~/.hermes/skills/software-development/nonfiction-book-pipeline
 ls ~/.hermes/skills/software-development/nonfiction-book-pipeline/
 ```
 
-Если видите `SKILL.md`, `references/` и `templates/` — всё в порядке.
+Если видите `SKILL.md`, `references/` и `templates/` — файлы на месте.
 
 Также можно открыть Hermes CLI и проверить список skills командой `/skills`.
 
 ### Шаг 5. Установите системные зависимости для PDF
 
-Финальная сборка PDF требует `pandoc` и LaTeX:
+Финальная сборка PDF требует `pandoc`, XeLaTeX, шрифты и инструменты проверки PDF:
 
 ```bash
 # Debian / Ubuntu
-sudo apt-get install pandoc texlive-xelatex fonts-dejavu
+sudo apt-get install pandoc texlive-xelatex fonts-liberation fonts-freefont-otf poppler-utils
 
 # macOS
-brew install pandoc texlive
+brew install pandoc texlive poppler
 
 # Если не ставить зависимости сейчас — pipeline всё равно соберёт manuscript.md,
 # а PDF можно создать позже.
@@ -109,11 +115,13 @@ brew install pandoc texlive
 
 Агент сам:
 
-1. Спросит уточнения — название, объём, аудиторию
+1. Уточнит название, объём, аудиторию и режим работы
 2. Создаст foundation — тезис, план, voice-гид, термины, факты
-3. Запустит параллельных субагентов — каждый пишет по 2–3 главы
-4. Проверит объём и доработает недостающие главы
-5. Соберёт `manuscript.md` и, если установлен pandoc, `book.pdf`
+3. Для исторических книг добавит `entities.md`, `fact_risk_map.md` и `reconstruction_policy.md`
+4. Запустит параллельных субагентов через Hermes `delegate_task` — каждый пишет по 2–3 главы
+5. Проверит объём и доработает недостающие или короткие главы
+6. Проведёт фактологический spot-check и чистку языковых артефактов
+7. Соберёт `manuscript.md` и, если установлен pandoc, `book.pdf`
 
 ---
 
@@ -123,20 +131,17 @@ brew install pandoc texlive
 nonfiction-book-pipeline/
 ├── README.md                 # Основной README на русском
 ├── README.en.md              # Английская версия README
-├── LICENSE                   # MIT
-├── .gitignore
 ├── SKILL.md                  # Описание skill и правила работы
 ├── references/               # Сценарии, проверки и вспомогательные документы
-├── templates/                # Шаблоны для foundation
-└── examples/                 # Примерные материалы
+└── templates/                # Шаблоны для foundation
 ```
 
 Подробнее:
 
 - `SKILL.md` — полное описание skill и его правил
-- `references/` — пошаговые процедуры, проверки и рекомендации
+- `references/` — пошаговые процедуры, проверки, troubleshooting и рекомендации
 - `templates/` — шаблоны для нового проекта книги
-- `examples/` — пример тезиса и структуры
+- `references/example-*.md` — пример тезиса и структуры
 
 ---
 
@@ -172,6 +177,8 @@ nonfiction-book-pipeline/
 - `foundation/fact_risk_map.md`
 - `foundation/reconstruction_policy.md`
 
+`facts.json` должен содержать поля `confidence` и `verified`; факты с `confidence: low` или `verified: false` нельзя использовать как установленные.
+
 ### 3. Drafting
 
 Разбейте главы между субагентами:
@@ -179,21 +186,39 @@ nonfiction-book-pipeline/
 - по 2–3 главы на одного субагента
 - каждый субагент получает одинаковый foundation
 - каждая глава должна следовать заданной структуре и voice
+- сомнительные имена, даты, цифры и цитаты проверяются до вставки в текст
 
-### 4. Expansion
+### 4. Expansion & Verification
 
-Проверьте полноту и объём:
+Проверьте полноту, объём и фактологические риски:
 
 - найдите отсутствующие главы
 - найдите слишком короткие главы
 - расширяйте их без удаления удачных фрагментов
+- проведите spot-check 5–10 наиболее рискованных утверждений
+- для проверки используйте локальный Search Harvester; внешние `web_search`, `web_extract` и браузерный поиск — только с отдельного разрешения пользователя
+- после expansion чистите CJK/English/mixed-script артефакты
 
 ### 5. Assembly
 
 Соберите `manuscript.md` и, если есть инструменты, сгенерируйте PDF.
 
 ```bash
-pandoc --standalone --toc --pdf-engine=xelatex -o book.pdf drafts/manuscript.md
+pandoc \
+  --standalone \
+  --toc \
+  --toc-depth=1 \
+  --pdf-engine=xelatex \
+  -V mainfont="Liberation Serif" \
+  -o book.pdf \
+  manuscript.md
+```
+
+Проверьте результат:
+
+```bash
+pdfinfo book.pdf
+pdftotext book.pdf - | head -60
 ```
 
 ---
@@ -201,9 +226,11 @@ pandoc --standalone --toc --pdf-engine=xelatex -o book.pdf drafts/manuscript.md
 ## Важные правила работы
 
 - Один `foundation/` должен быть единственным источником истины.
-- Субагенты не должны выдумывать факты, имена и прямые цитаты.
-- Перед drafting проверяйте confidence и verified в `facts.json`.
-- Держите задачи для субагентов короткими и контролируемыми.
+- Субагенты не должны выдумывать факты, имена, точные числа и прямые цитаты.
+- Перед drafting проверяйте `confidence` и `verified` в `facts.json`.
+- Для исторических книг ведите `entities.md`, `fact_risk_map.md` и `reconstruction_policy.md`.
+- Держите задачи для субагентов короткими и контролируемыми: 2–3 главы на задачу.
+- Expansion — обязательная вторая волна, а не опциональный этап.
 - После expansion чистите смешанные языковые артефакты и перепроверяйте объём.
 
 ---
@@ -215,6 +242,7 @@ pandoc --standalone --toc --pdf-engine=xelatex -o book.pdf drafts/manuscript.md
 - `references/subagent-delegation-failure.md` — workaround для делегации
 - `references/final-review-protocol.md` — финальная редактура
 - `references/json-source-validation.md` — проверка JSON
+- `references/cleanup-patterns.md` — чистка языковых и patch-артефактов
 
 ---
 

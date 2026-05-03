@@ -906,7 +906,21 @@ curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
 
 **Лимит параллельных субагентов:** `max_concurrent_children: 3` (default). 2–3 главы на одного субагента — оптимально для избежания таймаутов.
 
-## Publishing the Pipeline as a GitHub Repository
+## Publishing and Maintaining the Pipeline Repository
+
+### README / repository-state audit
+
+When asked to check whether the public README files match the current NFP state, do not rely on the README text itself. Verify against the actual repository and the live `SKILL.md`:
+
+1. Read both `README.md` and `README.en.md`.
+2. Compare their repository tree against `git ls-files` and `ls -la`; remove claims about files/directories that do not exist (e.g. `LICENSE`, `.gitignore`, `examples/`).
+3. Compare artifact paths against the current assembly rules: NFP outputs `manuscript.md` and `book.pdf` in the project root unless a specific project script says otherwise; do not document stale `drafts/manuscript.md` or `drafts/book.pdf` paths.
+4. Ensure README reflects current hard requirements: `entities.md`, `fact_risk_map.md`, `reconstruction_policy.md` for historical books; `confidence`/`verified` in `facts.json`; mandatory Expansion/Verification; CJK/English/mixed-script cleanup.
+5. Ensure README respects the user's search policy: local Search Harvester is preferred; external `web_search`, `web_extract`, or browser search require separate permission.
+6. Scan for stale orchestration language: no Kanban/канбан references; no ACP framing for ordinary subagent delegation; use `delegate_task`/`delegation` terminology.
+7. Verify with a simple grep/script plus `git diff --check` before reporting.
+
+### Publishing the Pipeline as a GitHub Repository
 
 To publish the finished pipeline (or any derived book project) as a public repo:
 
