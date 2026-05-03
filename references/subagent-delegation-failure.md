@@ -112,7 +112,7 @@ curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
 
 | Дата | Событие |
 |------|---------|
-| 2026-05-01 | Первые тесты delegate_task — HTTP 404. ACP-транспорт не найден. |
+| 2026-05-01 | Первые тесты `delegate_task` — HTTP 404; проверка ACP была ложным следом, потому что ACP не участвует в обычной субагентной делегации. |
 | 2026-05-02 AM | Пользователь находит root cause: `_resolve_delegation_credentials` без `target_model` → неправильный api_mode + base_url. |
 | 2026-05-02 AM | Применён workaround: `delegation.base_url` в config.yaml. |
 | 2026-05-02 AM | Дополнительная проблема: `deepseek-v4-flash` reasoning → пустой content. |
