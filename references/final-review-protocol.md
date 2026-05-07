@@ -4,6 +4,8 @@ Use this after a complete manuscript exists and external/internal review begins.
 
 ## 1. External review ingestion
 
+When the user asks for a manuscript review as a literary critic/editor, start with a fast repetition and structure audit before drafting prose feedback.
+
 Parse the review into categories:
 
 - critical factual

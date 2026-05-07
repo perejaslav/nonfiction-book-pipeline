@@ -1,6 +1,14 @@
 ---
 name: nonfiction-book-pipeline
+version: 1.0.0
 description: >
+  NonFiction Pipeline (NFP) — многостадийный pipeline для написания
+  научно-популярных книг через координированных субагентов.
+  Создаёт foundation (тезис, план, voice, термины, факты),
+  пишет главы параллельно, контролирует объём и стиль,
+  собирает manuscript.md и верстает PDF.
+category: software-development
+tags: [software-development, nonfiction-book-pipeline, nfp]
   NonFiction Pipeline (NFP) — многостадийный pipeline для написания 
   научно-популярных книг через координированных субагентов. 
   Создаёт foundation (тезис, план, voice, термины, факты), 
@@ -31,36 +39,112 @@ memory:
   - "Целевой объём книги: 60 000–100 000 слов для 10–16 глав."
   - "При таймаутах первой волны субагентов: проверить chapters/ на частично записанные файлы, затем запустить вторую волну (expansion) для добивки отсутствующих/коротких глав. Файлы, успевшие записаться до таймаута, остаются на диске."
   - "HARD FACT-CHECKING: все facts.json должны содержать поля confidence (high/medium/low) и verified (bool). Субагент обязан проверить все facts перед написанием. low и verified:false — не использовать как факт. Не выдумывать имён, цифр, папирусов, цитат в кавычках без подтверждения. Если сомневаешься — проверяй через локальный Search Harvester; внешний web_search/web_extract использовать только по отдельному разрешению пользователя."
----
 
 # NonFiction Pipeline (NFP)
 
 ## Обзор
 
-NFP — это многостадийный pipeline для создания длинных научно-популярных текстов (книг 60–80K слов) с помощью параллельных субагентов. Он разбивает задачу на 5 этапов: **Intake → Foundation → Drafting → Expansion → Assembly**, каждый из которых производит конкретные артефакты на диске.
+NFP — это многостадийный pipeline для создания длинных научно-популярных текстов (книг 60–80K слов) с помощью параллельных субагентов. Он разбивает задачу на 6 этапов: **Intake → Foundation → Drafting → Expansion → Russian AI-Style Cleanup → Assembly**, каждый из которых производит конкретные артефакты на диске.
+
+NFP остаётся **production engine** для длинного нонфикшна, но поверх него работает **editorial governance layer**: явные operating modes, intake contract, chapter-level evidence packs, resource-safe fallback, защита авторского замысла и два режима редакторского контроля. Это улучшает управляемость pipeline, не ломая сильные стороны foundation/drafting/expansion.
+
+**User workflow preference (Slawix):** for NFP book work, default to **NFP-only + delegate_task subagents**, not Kanban. Do not load or use `kanban-orchestrator` unless the user explicitly asks for Kanban. If Kanban was accidentally considered and the user says “stop” / “don’t use kanban-orchestrator”, immediately continue in NFP-only mode without asking for a restart.
+
+**Full-book delivery expectation:** when the user provides a detailed book plan/synopsis and asks to “write the book”, do not stop at a compressed sample-length draft. Treat the plan’s target word count as binding unless the user explicitly asks for a short version. If the first draft is far below target, immediately enter chapter-by-chapter Expansion with linked subagents, verify word counts after each wave, and continue until the manuscript is within the requested range (or at least clearly near it and documented). For Telegram delivery, copy the final `.md` to `/root/outputs/` and attach it with `MEDIA:/absolute/path` in the same response.
+
+## Operating Modes
+
+NFP поддерживает 4 режима работы; выбирать режим нужно до запуска Drafting:
+
+1. **Full Auto** — основной режим для детального синопсиса и стабильной системы. Агент сам проходит Foundation → Drafting → Expansion → Cleanup → Assembly, задавая только ключевые уточнения.
+2. **Guided Editorial** — draft/manuscript собирается автоматически, но редактура идёт по подтверждению пользователя: structural review → literary pass → repetition pass → fact-check → style unification → final proofread.
+3. **Sequential Safe Mode** — безопасный режим для слабого VPS, research-heavy тем, нестабильной делегации или явной просьбы пользователя работать линейно. Цикл: chapter map → evidence pack → draft → self-check → patch → next chapter.
+4. **Editorial-Only** — для уже существующей рукописи. Foundation и массовый Drafting не запускаются без необходимости; сначала diagnosis, затем план правок и targeted passes.
+
+По умолчанию для Slawix-style workflow использовать **Full Auto**. `Sequential Safe Mode` — fallback/safety path, а не новый universal default. Подробности: `references/operating-modes.md`.
+
+## Synopsis Intake Contract
+
+Перед Drafting должны быть понятны как минимум:
+- `title`;
+- `subject`;
+- `genre/subgenre`;
+- `audience`;
+- `central thesis`;
+- `reader promise`;
+- `tone`;
+- `rough structure`;
+- `source expectations`;
+- `forbidden interpretations / constraints`;
+- `desired scope` или достаточно данных, чтобы его оценить.
+
+Если этих данных не хватает:
+1. задать компактный пакет из **5–10 уточняющих вопросов максимум**;
+2. если пользователь просит не тормозить — явно зафиксировать допущения в `foundation/assumptions.md` и продолжить.
+
+Нельзя запускать Drafting, пока не понятны тема, аудитория, структура, тон, масштаб и требования к источникам.
 
 ## Архитектура
 
 ```
 User Input (тема/запрос)
     ↓
-Intake — создаёт проект-директорию
+Intake — создаёт проект-директорию и фиксирует project brief / допущения
     ↓
-Foundation — thesis.md, structure.md, voice.md, terms.md, facts.json
+Foundation — thesis.md, structure.md, chapter_map.md, voice.md, terms.md, facts.json, control artifacts
     ↓
-Drafting — параллельная запись глав (2–3 на субагента)
+    Drafting — параллельная запись глав (2–3 на субагента) ИЛИ sequential-safe цикл
     ↓
-Expansion — доработка отсутствующих/коротких глав
+    Expansion — доработка отсутствующих/коротких глав с опорой на word_count_plan.md
     ↓
-Assembly — сборка manuscript.md, вёрстка PDF
+    Russian AI-Style Cleanup — detect-first, точечная чистка русскоязычных глав
+    ↓
+    Assembly / Editorial — сборка manuscript.md, optional approval-gated revision, PDF
 ```
+
+## Authorial Intent Protection
+
+NFP не должен молча менять авторский замысел. Без явного подтверждения пользователя нельзя:
+- менять жанр;
+- менять центральный тезис книги;
+- менять финальный вывод;
+- удалять главы;
+- объединять или дробить крупные части;
+- менять интерпретационную рамку;
+- превращать строгий научпоп в свободную художественную реконструкцию;
+- добавлять крупные новые части, меняющие баланс книги.
+
+Если изменение кажется полезным, предлагать его так:
+```md
+Recommendation:
+Why:
+Benefit:
+Risk:
+Needs user approval: yes/no
+```
+Подробности: `references/authorial-intent-protection.md`.
+
+## Resource Safety Policy
+
+При признаках перегрузки или нестабильности (cascade timeouts, высокая нагрузка, unstable delegation, complaint about CPU/RAM, unusually heavy research density) переходить в режим:
+
+```text
+single-agent / sequential / no-kanban / no-background-workers / save-after-each-step
+```
+
+User-facing status line:
+```md
+Перехожу в безопасный последовательный режим: один активный этап, без Kanban и без массовой параллельности.
+```
+
+Этот раздел описывает fallback/safety mode, а не замену обычному parallel NFP. Подробности: `references/resource-safe-mode.md`.
 
 ---
 
 ## Этап 1. Intake
 
 **Вход:** запрос пользователя (тема, структура, желаемый объём).
-**Выход:** `intake.json` + директория проекта.
+**Выход:** `intake.json` + директория проекта + intake/control artifacts.
 
 ```bash
 mkdir -p /root/hermes-nonfiction-pipeline/{foundation,chapters,drafts,assets/{images,tables,maps},scripts,templates}
@@ -79,16 +163,62 @@ mkdir -p /root/hermes-nonfiction-pipeline/{foundation,chapters,drafts,assets/{im
 }
 ```
 
+### 1.1 Обязательные intake/control artifacts
+
+В начале проекта дополнительно создать:
+- `foundation/project_brief.md` — executive summary книги;
+- `foundation/assumptions.md` — явные допущения, если вход неполон или пользователь просит не задавать лишние вопросы;
+- `foundation/continuity_map.md` — карта повторов, мостов, возвратных кейсов и continuity-risks;
+- `foundation/word_count_plan.md` — плановый и фактический объём по главам.
+
+Шаблоны: `templates/project_brief.md`, `templates/assumptions.md`, `templates/continuity_map.md`, `templates/word_count_plan.md`.
+
 ---
 
 ## Этап 2. Foundation
 
-**Выход:** 5 файлов в `/foundation/`. Это единственный источник истины для всех субагентов.
+**Выход:** core foundation + historical/research-heavy extensions + control artifacts в `/foundation/`. Это единственный источник истины для всех субагентов.
 
-### 2.1 thesis.md
+### 2.0 Роли foundation-файлов
+
+- `structure.md` = **structural skeleton** (каркас книги и раскладка тезисов/объёма/фактов по главам).
+- `chapter_map.md` = **editorial intent map** (цель главы, главный вопрос, reader value, мосты, кейсы, нужные источники).
+- `facts.json` = **atomic fact base**.
+- `foundation/evidence/ch_XX.md` = **chapter-level synthesis layer** для фактически плотных глав.
+
+### 2.0A Core Foundation
+
+Обязательные core-файлы:
+- `project_brief.md`
+- `thesis.md`
+- `structure.md`
+- `chapter_map.md`
+- `voice.md`
+- `terms.md`
+- `facts.json`
+
+### 2.0B Control Artifacts
+
+Поддерживающие control-файлы:
+- `assumptions.md`
+- `continuity_map.md`
+- `word_count_plan.md`
+
+### 2.0C Historical / research-heavy extensions
+
+Для исторического, биографического и иного fact-dense нонфикшна дополнительно использовать:
+- `entities.md`
+- `fact_risk_map.md`
+- `reconstruction_policy.md`
+- `foundation/evidence/ch_XX.md` по главам
+
+### 2.1 project_brief.md
+Краткая executive summary книги: title, genre, audience, core thesis, reader promise, tone, scope estimate, user constraints, key risks, assumptions. Шаблон: `templates/project_brief.md`.
+
+### 2.2 thesis.md
 Центральный тезис + 3–5 подтезисов. Должен ответить на вопрос «почему эта книга нужна и что читатель вынесет из неё».
 
-### 2.2 structure.md
+### 2.3 structure.md
 План всех глав с полями:
 - `### Ch.XX: Название`
 - `**Тезис:** ...` — тезис главы
@@ -96,13 +226,27 @@ mkdir -p /root/hermes-nonfiction-pipeline/{foundation,chapters,drafts,assets/{im
 - `**Ключевые факты:** fact_XXX` — ссылки на facts.json
 - `**Содержание:**` — нумерованный список подтем
 
-### 2.3 voice.md
+### 2.4 chapter_map.md
+Редакторская карта глав поверх `structure.md`. Для каждой главы зафиксировать:
+- Purpose
+- Central Question
+- Reader Value
+- Key Claims
+- Scenes / Examples / Cases
+- Needed Sources
+- Bridge from previous chapter
+- Bridge to next chapter
+- Planned word count
+
+Шаблон: `templates/chapter_map.md`.
+
+### 2.5 voice.md
 Стилистический гид: тон, предложения, запреты, примеры неправильной/правильной формулировки.
 
-### 2.4 terms.md
+### 2.6 terms.md
 Таблица обязательных терминов + стилистические правила (camelCase, курсив при первом упоминании, запрет на анахронизмы и пр.).
 
-### 2.5 facts.json
+### 2.7 facts.json
 JSON-массив ключевых фактов с полями:
 ```json
 {
@@ -117,6 +261,34 @@ JSON-массив ключевых фактов с полями:
   "verification_note": "Дополнительный комментарий (опционально)"
 }
 ```
+
+### 2.7A assumptions.md
+Если пользователь дал неполный план или запретил лишние уточнения, все допущения должны быть явно зафиксированы. Это предотвращает silent thesis drift и спор о том, почему книга пошла в конкретную сторону.
+
+### 2.7B continuity_map.md
+Отслеживает мосты между главами, повторяющиеся кейсы, повтор тезисов, уже использованные исторические справки и continuity-risks. Используется и на этапе Drafting, и на этапе Repetition Audit.
+
+### 2.7C word_count_plan.md
+Основной управляющий артефакт объёма: planned words, drafted words, deficit/surplus, expansion status, final status по каждой главе.
+
+### 2.7D Evidence Packs
+
+Для research-heavy глав создать каталог:
+```text
+foundation/evidence/
+  ch_01.md
+  ch_02.md
+  ...
+```
+
+Evidence pack обязателен для:
+- исторического научпопа;
+- биографий;
+- исследовательских книг;
+- business/practical nonfiction с claims и статистикой;
+- любых глав с высокой плотностью проверяемых утверждений.
+
+`facts.json` не заменяет evidence pack. `facts.json` хранит атомарные утверждения; evidence pack синтезирует академические источники, статистику, экспертные позиции, кейсы, caveats и safe wording для конкретной главы. Шаблон: `templates/evidence_pack.md`. Подробности: `references/evidence-pack-guide.md`.
 
 ### 2.5A entities.md — реестр сущностей (обязателен для исторических книг)
 
@@ -212,17 +384,107 @@ Forbidden:
 
 **No named specialist without source:** имена археологов, переводчиков, экспедиций, документов, табличек, музейных инвентарных номеров и конкретных артефактов допускаются только при наличии записи в `facts.json`/`entities.md` или быстрой проверки. Если источника нет — использовать обобщённую формулу.
 
+### 2.5D Foundation Readiness Verification — проверка готовности фундамента (ОБЯЗАТЕЛЬНО)
+
+**КРИТИЧНО:** После завершения Foundation и ПЕРЕД запуском Drafting необходимо убедиться, что фундамент полностью покрывает план. Проверка должна быть количественной, а не визуальной.
+
+**Протокол:**
+
+```python
+import json, re
+
+# 1. Загрузить факты и структуру
+with open('foundation/facts.json') as f:
+    facts_data = json.load(f)
+with open('foundation/structure.md') as f:
+    structure = f.read()
+
+# 2. Извлечь все ссылки на факты из structure.md
+fact_refs = set(re.findall(r'fact_\w+', structure))
+db_ids = {f['id'] for f in facts_data['facts']}
+
+# 3. Найти расхождения
+uncovered = fact_refs - db_ids          # есть в плане, нет в базе
+unused = db_ids - fact_refs            # есть в базе, не используются
+
+# 4. Группировка по главам
+missing_by_chapter = {}
+for fid in uncovered:
+    parts = fid.replace('fact_', '').split('_')
+    ch = parts[0] if parts[0] not in ('prologue', 'epilogue') else parts[0]
+    missing_by_chapter.setdefault(ch, []).append(fid)
+
+# 5. Определить блокирующие главы
+#    Глава блокирующая = все 3 её факта отсутствуют
+blocked = [ch for ch, fids in missing_by_chapter.items()
+           if ch.isdigit() and len(fids) >= 3]
+
+# 6. Вердикт
+if uncovered or unused:
+    print(f"❌ NOT READY: {len(uncovered)} uncovered, {len(unused)} unused")
+    if blocked:
+        print(f"   BLOCKED chapters: {blocked}")
+    for ch, fids in sorted(missing_by_chapter.items()):
+        print(f"   {ch}: {fids}")
+else:
+    print("✅ READY: full match")
+```
+
+**Критерии готовности:**
+- `uncovered` = 0 (все факты из плана покрыты)
+- `unused` = 0 (нет лишних фактов)
+- `blocked` = [] (нет глав с полностью отсутствующими фактами)
+- Все факты имеют заполненные поля: `id`, `category`, `claim`, `source_type`, `source_ref`, `confidence`, `verified`, `verification_method`, `risk_categories`
+
+**Чеклист готовности фундамента:**
+```
+[ ] facts.json содержит ровно N фактов, где N = число уникальных факт-ссылок в structure.md
+[ ] 0 uncovered references
+[ ] 0 unused facts in DB
+[ ] 0 blocked chapters (chapters where ALL 3 facts are missing)
+[ ] Все 89 фактов имеют поля: confidence, verified, risk_categories, category
+[ ] 0 facts с verified: false или confidence: low
+[ ] risk_categories заполнены для всех фактов (список не пустой)
+[ ] facts.json валидируется: python3 -c "import json; json.load(open('facts.json'))"
+```
+
+**Почему это обязательно:** без этой проверки Drafting запускается с неполным фундаментом. Субагенты получат задания с ссылками на несуществующие факты — это приводит к галлюцинациям или таймаутам.
+
 ### 2.6 Адаптация при наличии готового синопсиса
 
 Если пользователь предоставил **детальный синопсис-план** (с тезисом, структурой всех глав, ключевыми сюжетами, оживляющими примерами и авторскими заметками), Foundation-фаза не генерируется с нуля, а **извлекается из синопсиса**:
 
-- **thesis.md** — центральный тезис и подтезисы из раздела «Концепция и позиционирование» / «Ключевые тезисы»
-- **structure.md** — каждая глава синопсиса содержит «Ключевые моменты для раскрытия» → преобразуются в разделы structure.md с тезисами, объёмом и ссылками на facts.json
-- **voice.md** — из авторских заметок в синопсисе (тональность, стилистические указания); если синопсис ссылается на конкретного автора/стиль (например, «в духе Тома Холланда»), зафиксировать это
-- **terms.md** — извлечь термины из текста синопсиса
-- **facts.json** — каждый «Ключевой момент» и «Оживляющий пример» порождает один или несколько фактов
+- **project_brief.md** — title, genre, audience, reader promise, tone, ограничения пользователя и ключевые риски;
+- **thesis.md** — центральный тезис и подтезисы из раздела «Концепция и позиционирование» / «Ключевые тезисы»;
+- **structure.md** — каждая глава синопсиса содержит «Ключевые моменты для раскрытия» → преобразуются в разделы structure.md с тезисами, объёмом и ссылками на facts.json;
+- **chapter_map.md** — для каждой главы фиксируются purpose, central question, reader value, кейсы, мосты и нужные источники;
+- **voice.md** — из авторских заметок в синопсисе (тональность, стилистические указания); если синопсис ссылается на конкретного автора/стиль (например, «в духе Тома Холланда»), зафиксировать это;
+- **terms.md** — извлечь термины из текста синопсиса;
+- **facts.json** — каждый «Ключевой момент» и «Оживляющий пример» порождает один или несколько фактов;
+- **evidence packs** — создавать сразу для research-heavy глав, а не ждать post-draft fact repair.
 
 Сам синопсис скопировать в `assets/synopsis.md` как reference для субагентов.
+
+## Genre Adapters
+
+NFP не становится универсальным skill для всех книг, но внутри нонфикшна должен адаптировать Foundation / Drafting / Revision под тип книги.
+
+### Historical nonfiction
+Использовать полный historical extension set: `entities.md`, `fact_risk_map.md`, `reconstruction_policy.md`, evidence packs и balanced fact-check before publication.
+
+### Biography
+Добавить life chronology handling, жёсткое отделение verified facts от поздней легенды и дисциплину era context around each life turn.
+
+### Business / practical nonfiction
+Сильнее фокусироваться на reader pain points, frameworks, case studies, applicability и anti-overclaiming discipline. Evidence packs здесь часто состоят из статистики, market context и проверяемых кейсов, а не только академических статей.
+
+### Textbook / guide
+Усилить learning sequence, recap logic, glossary/terminology discipline и при необходимости exercises/control questions.
+
+### Essayistic / hybrid nonfiction
+Разрешить более лёгкий evidence posture для интерпретативных глав, но усилить bridge logic, voice consistency и контроль повторов.
+
+Подробности: `references/genre-adapters.md`.
 
 ---
 
@@ -230,6 +492,25 @@ Forbidden:
 
 **Вход:** foundation-файлы.
 **Выход:** файлы глав в `/chapters/ch_XX.md`.
+
+### 3.0 Drafting paths
+
+У NFP два допустимых контура Drafting:
+
+1. **Parallel drafting path** — основной production path для длинных книг при стабильной системе: 2–3 главы на субагента, затем Expansion.
+2. **Sequential Chapter Loop** — safe/fallback path для constrained VPS, unstable delegation, research-heavy chapters или явной просьбы пользователя работать линейно.
+
+### 3.0A Sequential Chapter Loop
+
+Цикл по одной главе:
+1. Прочитать `project_brief.md`, `thesis.md`, `structure.md`, `chapter_map.md`, `voice.md`, `terms.md`, `facts.json`, `entities.md` (если есть) и соответствующий `foundation/evidence/ch_XX.md` (если глава fact-dense).
+2. Написать главу.
+3. Выполнить self-check по шаблону `templates/self_check.md`.
+4. При необходимости сделать точечный patch до перехода к следующей главе.
+5. Обновить `word_count_plan.md`.
+6. Только после этого переходить к следующей главе.
+
+Этот режим особенно полезен там, где ошибка в одной главе может испортить всю аргументацию книги. Он не заменяет параллельный NFP по умолчанию.
 
 ### 3.1 Правило разбивки
 Не более **2–3 главы на одного субагента**.
@@ -242,7 +523,8 @@ Forbidden:
 3. Толковое задание по каждой главе (тезис, объём, ключевые факты, структура)
 4. Указание: первое предложение главы — мост от предыдущей, последнее — мост к следующей
 5. Требование к стилю: соблюдать voice.md и terms.md
-6. Формат сохранения: `/chapters/ch_XX.md`
+6. Если глава fact-dense — использовать chapter-specific `foundation/evidence/ch_XX.md`, а не полагаться только на `facts.json`
+7. Формат сохранения: `/chapters/ch_XX.md`
 
 **Фактологическая дисциплина (CRITICAL — HARD REQUIREMENTS):**
 
@@ -311,6 +593,13 @@ def count_words(path):
 - Для отсутствующих — написать с нуля по foundation
 - Для коротких — прочитать существующий текст, определить недостающие разделы по structure.md, дописать, сохранить стиль и хорошие фрагменты.
 
+**Тщательное расширение по синопсису (после жалобы “слишком мало написал”).** Если пользователь просит расширять каждую главу согласно плану, работать волнами:
+1. Сначала `word count` по всем главам и явные целевые диапазоны по каждой главе.
+2. На волну запускать 2–3 связанных субагента: (a) контекстная карта без редактирования; (b) расширение одной главы/пары глав; (c) при необходимости второй редакторский/доборочный агент.
+3. После каждой волны проверять `word count`, CJK, mixed-script и наличие артефактов, затем обновлять список дефицитов.
+4. Если два субагента должны работать с одним файлом, не давать им параллельно перезаписывать его: один правит `chapters/ch_XX.md`, второй пишет `chapters/ch_XX_expansion_*.md`; ведущий агент затем вручную вставляет блоки и верифицирует заголовки.
+5. Не завершать работу, пока все главы не попали в плановый диапазон или пока дефицит не объяснён пользователю явно.
+
 ### 4.4 Фактологическая верификация (Spot-check)
 
 **Почему это необходимо:** Субагенты склонны галлюцинировать «оживляющие примеры» — конкретные имена второстепенных персонажей, цитаты из несуществующих папирусов, точные цифры без источника, хронологические привязки реальных лиц к неверным событиям. В научно-популярной книге это недопустимо.
@@ -377,10 +666,54 @@ print(f"Китайские: {chinese}, Латинские: {latin_phrases}")
 
 ---
 
+### Post-Editing LaTeX/Patch Artifact Cleanup
+
+**Вход:** уже написанные русскоязычные главы после Expansion и fact-check.
+**Выход:** текст без машинного запаха, но без потери голоса.
+
+Этот этап нужен только для поздней редактуры. Он не заменяет fact-check, не правит структуру и не переписывает книгу заново.
+
+### Правила безопасности
+
+- Сначала запускать **detect**, а не rewrite.
+- Rewrite разрешать только точечно: отдельные абзацы, переходы, вступления, заключения.
+- Не трогать факты, термины, имена и цитаты.
+- Не делать текст стерильным: если фрагмент уже звучит естественно, оставить его.
+- Не применять к foundation-файлам и не использовать на раннем черновике.
+
+### Что искать в первую очередь
+
+- шаблонные русские вводные и связки;
+- одинаковые ритмические конструкции;
+- чрезмерно гладкие абзацы;
+- канцелярит и «учительский» тон;
+- остатки английского текста, CJK или смешанные фрагменты;
+- места, где текст «слишком правильно» звучит как генерация.
+
+### Как использовать
+
+1. Пройти главу локально и отметить подозрительные места.
+2. Читать контекст вокруг каждого совпадения.
+3. Патчить только те фрагменты, которые явно лишние.
+4. После правки убедиться, что голос текста не исчез.
+5. Если сомнение остаётся, оставить фрагмент как есть.
+
+### Отдельный reference
+
+Для конкретных правил и списка шаблонных формул используй `references/russian-ai-style-cleanup.md`.
+
+### Анализ внешних фреймворков (5-промптный)
+
+5-промптный фреймворк (Idea → Blueprint → Draft → Narrative → Evidence) — хорошая спецификация, но линейная и без фактологической дисциплины. NFP превосходит его по итеративности, параллелизму, governance и автоматизации. Детали: `references/prompt-framework-analysis.md`.
+
 ## Этап 5. Assembly
 
 **Вход:** готовые главы.
-**Выход:** `book.pdf`.
+**Выход:** `manuscript.md` как основной deliverable, optional `book.pdf` / `book.epub`.
+
+### 5.0 Delivery priority
+
+Для NFP по умолчанию canonical output — `manuscript.md`. Для Telegram итоговый `.md` копировать в `/root/outputs/` и прикреплять в том же ответе через `MEDIA:/absolute/path`. PDF/EPUB собирать только если это нужно пользователю или производственному этапу.
 
 ### 5.1 Сборка manuscript.md
 Использовать скрипт или `pandoc`:
@@ -389,7 +722,9 @@ print(f"Китайские: {chinese}, Латинские: {latin_phrases}")
 3. `\part*` перед каждой частью
 4. TOC (оглавление) — `--toc`
 
-### 5.2 PDF
+### 5.2 PDF / EPUB export
+
+For a finished `manuscript.md`, especially when the user asks for both PDF and EPUB or explicitly says the PDF must contain a table of contents at the beginning, use the proven Pandoc workflow in `references/pandoc-pdf-epub-export.md`.
 
 **Бумага A5** — стандарт для научно-популярных книг. При объёме ~30K слов выходит ~150 страниц.
 
@@ -425,6 +760,8 @@ pandoc \
 pdfinfo book.pdf        # страницы, размер, метаданные
 pdftotext book.pdf - | head -60  # читаемость: титул → посвящение → оглавление → контент
 ```
+
+For EPUB verification, check the zip structure and TOC files (`EPUB/toc.ncx`, `EPUB/nav.xhtml`) as shown in `references/pandoc-pdf-epub-export.md`.
 
 **Типичная структура PDF (правильный порядок):**
 1. Страница 1 — титул (название + автор + год из frontmatter)
@@ -496,6 +833,10 @@ date: "2026"
 
 ### 5.5 Постпроцессинговая ревизия рукописи (после вычитки субагентами)
 
+Для глобального финального прохода по уже готовой рукописи работай как единый редакторский контур: сначала весь файл целиком, затем точечные патчи по самым сильным повторным кластерам. Не распыляйся на субагентов, если задача именно в согласованности ритма и повторов.
+
+См. `references/manuscript-repetition-audit.md`.
+
 После сборки `manuscript.md` и получения отчётов вычитки — **обязательный этап исправления критических проблем**. Это не optional: субагенты находят реальные ошибки.
 
 **Порядок действий (7 шагов):**
@@ -506,6 +847,9 @@ date: "2026"
 
 3. **Мосты между главами.** Искать места где нарратив обрывается. Проверять: конец каждой главы → начало следующей. Если перехода нет — вставить 2–3 предложения моста перед `# Глава N`. Текст моста должен отвечать на вопрос: «К чему это ведёт? Почему это важно для следующей темы?».
 
+   **Full final pass pitfall:** если пользователь просит «полный финальный проход», «с начала книги», «по началу и концовкам глав» — нельзя ограничиваться самыми рискованными поздними главами или выборочными стыками, даже если они объективно слабее. Сначала пройти последовательно от Пролога/Гл. 1 вперёд, снять карту всех начал/концовок, и только затем решать, где править. Если пользователь отдельно разрешает «до последних глав можно не доходить, их уже делали» — остановиться перед уже обработанной зоной, но раннюю и среднюю части пройти линейно, без выборочного режима.
+   - **Если пользователь просит «последний проход по началам и концовкам глав» или отдельно подчёркивает переходы между главами, проход должен быть линейным по всей книге, а не выборочным.** Сначала снять карту всех глав подряд (первый абзац, последний абзац, стык с соседней главой), затем править адресно. Не ограничиваться только «самыми рискованными» поздними главами, если пользователь явно не сузил область.
+
 4. **Расширение библиографии.** Если в библии <6 источников — добавить. Минимум: 2 первичных (ETCSL или аналог), 4–6 научных (Крамер, Якобсен, Боттеро + 2–3 современных). Обязательно: годы публикации в скобках.
 
 5. **Стандартизация заголовков.** Проверить все `##` заголовки: единый формат (двоеточие или точка, не смешивать), нет English-фраз в заголовках. Обычная ошибка: `## Крючок: Британский музей, 1872 год` — если этот хук уже был во Введении, в главе должен быть **мост**, а не второй хук.
@@ -515,6 +859,8 @@ date: "2026"
 7. **Финальная сборка и проверка.** После всех правок — пересборка manuscript.md и финальный подсчёт слов. Целевой диапазон: target ±5%.
 
 **Ключевой принцип хуков:** Хук — кинематографичная сцена с конкретным местом, временем и действием. Мост — 2–3 предложения, объясняющие связь с предыдущей/следующей темой. В книге должен быть **один главный хук** (во Введении). Каждая глава начинается с **моста**, а не с хука. Исключение: если синопсис явно требует хук для конкретной главы (например, глава об Инанне начинается со сцены её нисхождения в Кур) — это допустимо, но только если такого хука нет во Введении.
+
+**Субагентный патчинг manuscript.md — риски и протокол.** При bulk-субагентном патчинге (удаление `||`, сокращение повторов, стилистика) возникают три класса дефектов: (1) `||` 2+ в одном абзаце — это разделители вставных фрагментов, а не склейки; (2) orphaned paragraphs после удаления дублей; (3) race condition при параллельных субагентах на один файл. Полный протокол верификации — `references/post-editing-review.md`.
 
 **Быстрая проверка заголовков:**
 ```bash
@@ -532,6 +878,43 @@ grep "^## " manuscript.md | head -30
 - [ ] Хук во Введении
 - [ ] Word count в диапазоне
 - [ ] LaTeX/patch-артефакты удалены
+- [ ] Механические связки и тяжёлые вводы (`Как бы то ни было`, `Важно понять`, `Важно понимать`, избыточные `В этом смысле`) либо удалены, либо оставлены только как осознанный рефрен
+
+### Post-Editing LaTeX/Patch Artifact Cleanup
+
+**Вход:** уже написанные русскоязычные главы после Expansion и fact-check.
+**Выход:** текст без машинного запаха, но без потери голоса.
+
+Этот этап нужен только для поздней редактуры. Он не заменяет fact-check, не правит структуру и не переписывает книгу заново.
+
+### Правила безопасности
+
+- Сначала запускать **detect**, а не rewrite.
+- Rewrite разрешать только точечно: отдельные абзацы, переходы, вступления, заключения.
+- Не трогать факты, термины, имена и цитаты.
+- Не делать текст стерильным: если фрагмент уже звучит естественно, оставить его.
+- Не применять к foundation-файлам и не использовать на раннем черновике.
+
+### Что искать в первую очередь
+
+- шаблонные русские вводные и связки;
+- одинаковые ритмические конструкции;
+- чрезмерно гладкие абзацы;
+- канцелярит и «учительский» тон;
+- остатки английского текста, CJK или смешанные фрагменты;
+- места, где текст «слишком правильно» звучит как генерация.
+
+### Как использовать
+
+1. Пройти главу локально и отметить подозрительные места.
+2. Читать контекст вокруг каждого совпадения.
+3. Патчить только те фрагменты, которые явно лишние.
+4. После правки убедиться, что голос текста не исчез.
+5. Если сомнение остаётся, оставить фрагмент как есть.
+
+### Отдельный reference
+
+Для конкретных правил и списка шаблонных формул используй `references/russian-ai-style-cleanup.md`.
 
 ## Truncation Artifacts — обрезки и склейки при патчинге
 
@@ -574,7 +957,7 @@ grep "^## " manuscript.md | head -30
 
 ### Micro-final pass rule
 
-Если рецензия говорит «осталось только N мест» или пользователь просит «исправить только эти пункты»:
+If рецензия говорит «осталось только N мест» или пользователь просит «исправить только эти пункты»:
 
 1. Создать todo ровно из этих пунктов.
 2. Для каждого пункта прочитать контекст `read_file(offset, limit)`.
@@ -582,6 +965,20 @@ grep "^## " manuscript.md | head -30
 4. Проверить, что старые фразы исчезли через `search_files`.
 5. Не запускать broad cleanup, style pass, rewrite pass, expansion.
 6. Сразу собрать финальные `.md`/`.pdf` и отправить.
+
+### Publication-final micro-pass for NFP manuscripts
+
+When the user asks for a final pass before publication after a manuscript is already at ~9/10, treat it as **surgical compression + verification**, not another rewrite:
+
+1. Make a timestamped backup of `chapters/` and `manuscript.md` before touching files.
+2. Create todos exactly from the user's bullets (chapter-specific cuts, phrase-frequency audit, microproof, assembly).
+3. Patch chapter source files, not only `manuscript.md`; then reassemble from canonical chapter order.
+4. For chapter-specific repetition complaints, inspect paragraph maps first (`paragraph index + word count + first 250 chars`), then remove/compress only the named clusters. Example: if a person (e.g. Kimon) appears twice with the same function, keep one contextual mention and one substantive paragraph; remove the bridge mention or merge it.
+5. For “reference blocks” that no longer serve conflict/drama, delete only paragraphs that do not lead to the chapter’s core tension. Preserve paragraphs that tie material details to conflict (e.g. Oльвия—степь, Херсонес—хора/оборона, Боспор—зерно/царская власть).
+6. For final chapters about wars/figures, cut biography and historiographical afterlife unless it advances the book thesis. Re-anchor military events to the project’s concrete resources: ports, fleet, grain, tribute, garrisons, steppe alliances, client kings.
+7. Audit repeated macro-formulas with counts by chapter, not only whole-book counts. If a phrase family exceeds the user’s threshold, replace with concrete terms from the book’s resource map.
+8. Microproof after every patch wave: `до н. э.` consistency, CJK=0, TODO=0, HTML=0, pipe tables=0, mixed-script=0, technical markers=0, leading-space code blocks=0, and overconfident markers (`несомненно`, `безусловно`, `доказано`) replaced with cautious wording where needed.
+9. Reassemble, copy final `.md` to `/root/outputs/`, and for Telegram attach it with `MEDIA:/absolute/path` in the same response.
 
 **Stop condition:** завершить книгу, если выполнены условия:
 - критических фактологических ошибок не осталось;
@@ -593,6 +990,11 @@ grep "^## " manuscript.md | head -30
 ### Протокол
 
 1. **Прочитай рецензию целиком** — выдели все места, где указаны конкретные старый/новый текст.
+2. **Перед ответом о состоянии файла/рукописи проверь файл на диске.** Если пользователь спрашивает, "на месте ли" файл, не опирайся на список задач, память или предыдущее сообщение — сначала сделай `test -f` / `ls -l` / `stat` для точного пути. Состояние файла подтверждать только фактом файловой системы.
+3. **При необходимости сверяй путь проекта.** Если есть риск, что путь устарел или проект был перенесён, сначала `pwd` и `ls -la` в каталоге проекта.
+4. **Используй `patch(mode=replace, old_string, new_string)`** — это безопаснее `sed`, потому что требует точного совпадения и не сломает структуру файла.
+5. **Веди учёт через `todo`** — создай список всех правок, отмечай их `in_progress` → `completed`.
+6. **Верифицируй** — после всех правок запусти `search_files(path=manuscript.md, pattern=...)` для каждого удалённого/заменённого оборота. Убедись, что старые фразы не остались.
 2. **Для каждой правки** — прочитай контекст вокруг целевого текста через `read_file(offset, limit)` с запасом ±10 строк. Убедись, что old_string уникален и не заденет соседние абзацы.
 3. **Используй `patch(mode=replace, old_string, new_string)`** — это безопаснее `sed`, потому что требует точного совпадения и не сломает структуру файла.
 4. **Веди учёт через `todo`** — создай список всех правок, отмечай их `in_progress` → `completed`.
@@ -601,6 +1003,34 @@ grep "^## " manuscript.md | head -30
 ### External Review Ingestion
 
 Когда пользователь присылает внешнюю рецензию (`review.md`, `chatgpt_*.md`, редакторский отчёт), сначала преврати её в рабочую карту правок.
+
+### Editorial Control Modes
+
+NFP поддерживает два режима поздней редакторской оркестрации:
+
+1. **Auto Editorial** — если пользователь хочет end-to-end completion без остановок. Типовой порядок:
+   - structural optimization;
+   - repetition cleanup;
+   - balanced fact-check;
+   - style cleanup;
+   - final proofread;
+   - assembly.
+
+2. **Approval-Gated Editorial** — если пользователь хочет checkpoints или если правки могут затронуть структуру/авторский замысел. Типовой порядок:
+   - structural review;
+   - literary pass;
+   - repetition pass;
+   - fact-check;
+   - style unification;
+   - final proofread.
+
+После каждого approval-gated этапа кратко сообщать:
+- что изменено;
+- что осталось;
+- есть ли structural risk;
+- нужен ли explicit user approval.
+
+Подробности: `references/editorial-control-modes.md`.
 
 **Алгоритм:**
 1. Извлечь текущую оценку, целевую оценку и статус («черновик», «почти финал», «финал после микроправок»).
@@ -616,21 +1046,114 @@ grep "^## " manuscript.md | head -30
 3. Создать todo по категориям.
 4. Если категория содержит точные старый/новый текст — патчить вручную.
 5. Если категория требует анализа целой главы — можно дать субагенту только эту категорию и только эту главу.
-6. После всех правок — контрольный проход ведущим: структура `grep "^# "`, старые фразы, word count, PDF.
+6. Если рецензия требует **структурной оптимизации полной книги** (перестановка глав, сокращение перегруза, унификация заголовков, усиление конфликтной дуги), использовать отдельный протокол `references/structural-review-editing.md`: сделать backup, задать измеримые проценты сокращения, проверять субагентов на destructive overcut, при необходимости восстанавливать главы и делать surgical pass ведущим.
+7. После всех правок — контрольный проход ведущим: структура `grep "^# "`, старые фразы, word count, PDF/MD.
 
 **Правило приоритета:** critical factual > terminology > overclaiming > structure > style > proofreading > PDF.
 
-### Five-pass final editing protocol
+**Структурный review pitfall:** если критик говорит «не расширять, а сжать, переставить, усилить конфликт», не запускать обычный Expansion. Субагенты могут чрезмерно урезать главы или переписать полезный материал; лидер обязан сверить word count до/после и восстановить из backup всё, что ушло за пределы заданного сокращения.
 
-Финальная редактура исторического научпопа проходит не одним «улучши текст», а пятью разными проходами:
+### Five-pass final editing protocol (post-review editing)
 
-1. **Structural coherence:** дуга книги, порядок глав, повторы, мосты, перегруженные блоки.
-2. **Terminology/entities:** имена, должности, города, термины, варианты написания, запретные связки.
-3. **Fact-risk cleanup:** даты, экспедиции, точные числа, археологические находки, абсолютные первенства, прямые линии влияния.
-4. **Style cooling:** убрать чрезмерную публицистику, офисные/технологические анахронизмы, «самое важное/интересное», перегретые метафоры.
-5. **Production:** микровычитка, структура заголовков, `.md`, PDF, проверка `pdftotext`.
+Финальная редактура исторического научпопа проходит не одним «улучши текст», а пятью разными проходами. Применять после получения редакторской рецензии (8–8.5/10) — до выхода на целевой уровень 8.8–9.1/10:
+
+1. **T1 — Technical cleanup:** pipe-строки (` | `), LaTeX-артефакты (`\newpage`, `\thispagestyle`, bridge, header, span, removed), CJK-символы, mixed-script transitions, placeholder'ы `(факт XX_XX)`.
+2. **T2 — Factual review:** возраст исторических лиц, точные цифры, титулы и термины, цитаты, даты, хронология. Сверка с facts.json и entities.md.
+3. **T3 — Stylistic cooling:** убрать «важно понимать», «показывает нечто важное», дубли «мозаикой», лишние «не просто... а...», публицистические перегрузки.
+4. **T4 — Final third strengthening:** для книг с нарративным финалом (войны, империи, кризисы) — усилить драматургию последних глав. Ключевые точки: (a) центральная идея должна быть проговориваема в финале — «империя пала не потому что слабая, а потому что...»; (b) финальный абзац вводит новую глубину, а не повторяет; (c) если книга об империи — в финале должен быть парадокс: почему система, созданная для устойчивости, всё же сломалась.
+5. **T5 — Heading standardization:** убрать `§` из подзаголовков, выровнять формат (`## N. Текст`), удалить `---` разделители (кроме намеренного перед финальным курсивным блоком), сгладить мосты между главами.
+6. **T6 — Final assembly:** финальная чистка артефактов (скрипт выше), пересчёт слов, отправка файла. **Для Telegram** — отправлять `.md` файл напрямую (MEDIA: path), а не PDF. PDF собирать только по отдельному запросу.
 
 Не смешивать все пять проходов в одном субагентском задании: это повышает риск структурных поломок.
+
+### Post-Editing Artifact Patterns (live lessons from book sessions)
+
+- `references/literary-critique-checklist.md` — concise rubric for publication-readiness reviews: opening/middle/ending pass, repetition audit, structural blockers, and prioritized repair plan.
+- `references/file-presence-checks.md` — quick filesystem verification recipe for user questions like “is the file on disk?”; check the exact path before reporting manuscript status.
+
+После нескольких сессий редактуры обнаружены дополнительные паттерны артефактов, не покрытые общей чисткой:
+
+**`(факт XX_XX)` — фактологические placeholder'ы.** После этапа фактчека (T2) в тексте могут остаться конструкции `(факт 10_01)`, `(факт 10_02)` и т.п. — ссылочные заглушки, которые должны были быть заменены контекстом. Это систематический артефакт: при фактчекинге факты заменяются на утверждения, но скобки с ID могут остаться.
+
+- Поиск: `grep -n "факт [0-9]" manuscript.md`
+- Все такие конструкции — удалять, оставляя текст без скобок и без ID.
+- Исключение: конструкции вида «DB §68» (ссылки на разделы Бехистунской надписи) —学术界 стандарт, не удалять.
+
+**`§ 1.`, `§ 2.` и т.д. в подзаголовках.** При структурировании главы субагент может пронумеровать секции через `§`. Это не стандартное форматирование для русскоязычного научпопа — удалять префикс, оставляя текст заголовка.
+
+- Поиск: `grep -n "^## § " manuscript.md`
+- Лечение: `patch` с заменой `## § N. Текст` → `## N. Текст`
+
+**Разделители `---` между главами.** Markdown-разделители, вставленные как визуальные разделители, при сборке PDF через pandoc превращаются в неуместные горизонтальные линии. Исключение: намеренный `---` перед финальным курсивным блоком (типа «*А в центре этой истории...*»).
+
+- Поиск: `grep -n "^---" manuscript.md` (исключая frontmatter)
+- Правило: все `---` кроме последнего (перед финальным авторским отступлением) — удалять через `text.replace("\n---\n", "\n")`
+
+**Регулярка для финальной проверки (запускать перед отправкой):**
+```python
+import re, subprocess
+
+path = "manuscript.md"
+with open(path) as f: text = f.read()
+
+checks = {
+    "pipe-строки (|)": text.count(" | "),
+    "факт_метки": len(re.findall(r'факт \d+_\d+', text)),
+    "§ в заголовках": len(re.findall(r'^## § ', text, re.M)),
+    "--- разделители": text.count("\n---\n"),
+    "CJK": len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', text)),
+    "важно понимать": text.count("важно понимать"),
+    "показывает нечто важное": text.count("показывает нечто важное"),
+}
+for k, v in checks.items():
+    status = "✓" if v == 0 else f"⚠ {v}"
+    print(f"  {status}  {k}")
+
+r = subprocess.run(["wc", "-w", path], capture_output=True, text=True)
+print(f"  Слов: {r.stdout.strip()}")
+```
+
+### Markdown Heading Hierarchy (критично для научпопа)
+
+Иерархия заголовков — не косметика, а основа читабельного оглавления. В Markdown-рукописи для научпоп-книги:
+
+```
+# Название книги
+## Часть I. Название части
+## Глава 1. Название главы
+### 1.1. Название секции          ← нумерованные
+### Название несекционной подтемы   ← ненумерованные подразделы
+```
+
+**Допустимые уровни `##`:** только `# Book Title`, `## Часть N`, `## Глава N`. Всё остальное — `###` и ниже.
+
+**Типовой дефект (критик 4-го тура, 8.9/10):** ненумерованные подразделы стоят на `##`, наравне с частями и главами. В оглавлении это создаёт «плоскую» структуру — читатель не видит иерархии.
+
+**Признак проблемы:**
+```bash
+grep '^## [А-ЯЁA-Z]' manuscript.md  # должно показывать только Части + Главы
+grep '^### [А-ЯЁA-Z]' manuscript.md  # все остальные подразделы
+```
+Если `##` подразделов больше, чем глав — нужен heading-downgrade pass.
+
+**Батчевое понижение (execute_code + Python):**
+```python
+path = "manuscript.md"
+with open(path) as f:
+    lines = f.readlines()
+
+# Подразделы которые нужно понизить: ищем все ## кроме Частей и Глав
+for i, line in enumerate(lines):
+    stripped = line.strip()
+    # Понижаем все ## которые НЕ начинаются с "Часть" или "Глава"
+    if stripped.startswith('## ') and not stripped.startswith('## Часть') and not stripped.startswith('## Глава'):
+        lines[i] = '###' + line[3:]  # ## → ###
+
+with open(path, 'w') as f:
+    f.writelines(lines)
+```
+
+После понижения — верификация счётчиками (`grep -c '^## \|^### '`).
 
 ### Modern metaphor and anachronism audit
 
@@ -671,6 +1194,69 @@ with open(path, 'w') as f: f.write(text)
 pdfinfo book.pdf
 ```
 Должно быть: страниц ~250–350 при объёме 60–80K слов.
+
+### 5.7 Repetition audit for final manuscript passes
+
+For a late-stage manuscript clean-up focused on repetition and rhythm, use the whole-text audit pattern from `references/manuscript-repetition-audit.md`:
+- scan repeated anchors across the full file;
+- inspect each match in context before patching;
+- delete weaker duplicates, compress intermediate recaps, or rephrase to vary rhythm;
+- keep only deliberate refrains in the ending.
+
+For a narrower manual polish pass on literary rhythm and rough phrasing, also use `references/style-rhythm-pass.md`.
+
+This pass is for manuscript coherence, not for subagent orchestration.
+
+### 5.8 Balanced fact-check before publication
+
+For historical nonfiction that is already structurally sound, run a *balanced* fact-check before calling it final:
+- verify the obvious high-risk items first (foundations, dates, rulers, dynasties, exact quantities);
+- do not turn every paragraph into a citation hunt;
+- correct actual errors directly;
+- soften plausible but source-light claims with hedging instead of overclaiming;
+- treat one strong correction pass as better than endless micro-editing.
+
+Use `references/historical-factcheck-pass.md` for the quick checklist and the corrections we’ve already encountered in this manuscript family.
+
+---
+
+## Production Lessons (from real book sessions)
+
+Below are hard-won operational patterns observed across multiple NFP books.
+
+### Expansion is always needed — plan for it
+Even after 2 drafting waves, chapters consistently land at 60–75% of target. Expansion is a structural phase, not a recovery mechanism. For detailed user-provided synopses, use the wave protocol in `references/full-book-expansion-waves.md`: count deficits, run context-map + writing subagents, avoid same-file races, verify after every wave.
+Book anatomy that consistently underperforms after Drafting:
+- **Part I**: ch_04–05 (geography/setup chapters)
+- **Part II**: ch_07, ch_09 (political crisis, administration)
+- **Part III**: ch_13–14 (religion, army)
+- **Part IV**: ch_18, ch_20 (Marathon, aftermath)
+- **Part V–VI**: ch_23–28 (late empire, collapse — most consistent underperformers)
+
+**Pattern**: the last 3–4 chapters of any multi-chapter batch are always shorter than the first. Allocate expansion capacity to the tail.
+
+### Timed-out subagent may have written partial files
+`delegate_task` timeout (900 s) is a network/API event, not a completion guarantee. The subagent process may have finished writing before the timeout fired. **Always check `ls chapters/` before relaunching.** Example: subagent for ch_18–20 reported "timeout" but all three files were already on disk at 2,300–2,400 words each. Relaunching would have caused duplication.
+
+### Realistic word counts
+A single `execute_code` → `write_file` call produces ~1,500–2,500 words per call. A chapter at 3,000 words target requires 2–3 expansion iterations after the initial draft.
+
+Typical post-Drafting totals by wave:
+- Wave 1 (Prologue + Part I, 3 subagents): ~13,000–16,000 words
+- Wave 2–3 (Parts II–III, 3 subagents): ~14,000–17,000 words
+- Wave 4–5 (Parts IV–VI, 3 subagents): ~14,000–16,000 words
+- Final batch (ch_23–28 + Epilogue, 1 subagent): ~10,000–12,000 words
+- Expansion (3 batches, 14 chapters): +12,000–15,000 words
+- **Realistic ceiling with current setup**: ~77,000–79,000 words (96–99% of 80K target)
+
+### Expansion batch sizing
+14 short chapters → split into 3 batches: 5 + 5 + 4. This prevents subagent overload and ensures quality. The 4-chapter batch (ch_25–28) consistently benefits from extra iteration time.
+
+### Manuscript assembly is straightforward
+Concatenate files in structure order, insert `## Part N. Title` markers at part boundaries, add a title block at the top. No YAML frontmatter needed for the body. Verification: `grep "^## Часть" manuscript.md` should show 6 part markers.
+
+### ch_24 and ch_28 need dedicated expansion
+These two boundary chapters (last of Part V, last of Part VI) consistently land at 73–77% of target even after Expansion batch 1. Give them a dedicated "single-chapter expansion" pass.
 
 ---
 
@@ -788,6 +1374,37 @@ pdfinfo book.pdf
 
 **Регулярка для поиска:** `\\b[a-zA-Z]{3,}[а-яА-ЯёЁ]{1,4}\\b` — mixed-script transitions.
 
+### Trailing paragraph-continuation spaces (execute_code)
+
+При bulk-патчинге абзацев через `patch(mode=replace)` может возникнуть ситуация, когда после split/join или при конкатенации строк в continuation-абзаце появляется лидирующий пробел: строка ` Набонид пришёл...` (с пробелом) — это не markdown-разрыв, а артефакт. Pandoc читает это как code block, grep не показывает при обычном search.
+
+**Детекция:**
+```bash
+grep '^ [А-ЯЁA-Z]' manuscript.md   # строки с одним пробелом + заглавная
+```
+
+**Лечение (execute_code, не patch):**
+```python
+path = "manuscript.md"
+with open(path) as f:
+    lines = f.read().split('\n')
+
+fixed = 0
+for i, line in enumerate(lines):
+    if i > 0 and line.startswith(' ') and len(line) > 1 and line[1].isupper():
+        lines[i] = line[1:]  # убрать один ведущий пробел
+        fixed += 1
+
+print(f"Fixed {fixed} lines")
+content = '\n'.join(lines)
+with open(path, 'w') as f:
+    f.write(content)
+```
+
+**Почему не patch:** `patch` требует точного совпадения old_string/new_string. Если пробел в old_string визуально неотличим от обычного пробела в new_string — инструмент не видит разницы и отказывает. execute_code работает с raw line array и убирает байт напрямую.
+
+---
+
 ## Структурные дефекты после субагентного патчинга
 
 Помимо мусорных строк (`\\newpage`, `bridge`, `header`), субагенты-патчеры вносят **структурные** дефекты:
@@ -832,7 +1449,7 @@ pdfinfo book.pdf
 
 11. **Заключение — особая глава** — у него иная природа, чем у нарративных глав. Это эмоциональный финал, а не информационный блок. Реалистичный объём: 1 500–2 000 слов (не 3 000). quality gate: <500 слов — критически мало, требует расширения. Целевой порог: ≥1 500 слов. Заключение нельзя «добивать» тем же методом, что главы — оно требует цельного переписывания, а не наращивания.
 
-12. **facts.json — валидация и ремонт** — структура файла: `{"metadata": {...}, "facts": [...]}`. Это **словарь с двумя ключами**, а не плоский массив. Распространённые ошибки при ручном редактировании:
+12. **Фундамент выглядит готовым, но не покрывает план.** Визуальная проверка ("файлы есть, значит ок") — недостаточна. Признаки скрытой неготовности: facts.json содержит 55 фактов из 89, 4 главы полностью без фактов, у части фактов отсутствуют поля `risk_categories`, `category`, `verification_method`. Всегда запускать скрипт из **2.5D Foundation Readiness Verification** — он выдаёт бинарный вердикт и список имён пропущенных фактов с разбивкой по главам. Без этой проверки запуск Drafting приведёт к субагентам, которые не найдут нужных фактов и будут галлюцинировать. — структура файла: `{"metadata": {...}, "facts": [...]}`. Это **словарь с двумя ключами**, а не плоский массив. Распространённые ошибки при ручном редактировании:
     - Одинарные кавычки как разделитель строки (`'значение'`) — невалидный JSON. Все строковые значения должны быть в двойных кавычках.
     - Внутренние кавычки в тексте (например, прямая речь внутри `verification_note`) должны быть экранированы: `"сказал он"` → `\"сказал он\"` в JSON.
     - Фигурные юникод-кавычки (`„` U+201E, `"` U+201C) могут появляться при копировании из Word/Google Docs и нарушать валидность.
@@ -865,13 +1482,25 @@ pdfinfo book.pdf
 
 16. **Editorial review passes — координация 4+ субагентов параллельно.** Внешняя рецензия (7–8/10) выявляет 5–8 категорий проблем. Оптимальная стратегия — запускать **4 субагента одновременно**, каждый на свою категорию, затем финальная дошлифовка ведущим. Категории: (1) техническая чистка, (2) переструктурирование перегруженной главы, (3) фактологические оговорки, (4) терминология и стиль, (5) сокращение конкретных глав. При волне 4 субагентов — обязателен контрольный проход ведущего после их завершения (субагенты могут вносить структурные дефекты: дубли заголовков, потеря секций, артефакты склейки). Патч-файл ведущего занимает 1–2 правки, но требует чтения контекста вокруг каждой правки.
 
-17. **Дублирование контента между waves.** Субагент волны 2 может добавить секцию, которая уже существует в файле (например, библиографию). Всегда перед финальной отправкой — `grep -n "## Библиография\|## Что осталось\|# Финал\|# Примечания"` — проверить порядок и отсутствие дубликатов.
+17. **Дублирование контента между waves.** Субагент волны 2 может добавить секцию, которая уже существует в файле (например, библиографию). Всегда перед финальной отправкой проверить порядок и отсутствие дубликатов.
+
+18. **Существующий manuscript без истории NFP.** Если пользователь говорит «мы начали писать книгу», но в директории проекта нет поддиректорий `chapters/`, `drafts/`, `foundation/` — это означает, что рукопись была написана напрямую, а не через стандартный pipeline. В этом случае:
+    - **Пропустить** этапы Foundation, Drafting, Expansion.
+    - Перейти напрямую к **Assembly → Revision (T1–T6)**.
+    - При продолжении работы — уточнить у пользователя: «Книга была написана в предыдущих сессиях. Продолжаю с того места, где остановились. Что нужно сделать?»
+    - Признаки проекта без NFP-истории: наличие `manuscript.md` в корне, отсутствие `foundation/`, `chapters/`, `intake.json`.
 
 ---
 
-## Subagent Configuration
+## Production Lessons (from real book sessions)
 
-Субагенты используют настроенный провайдер из `config.yaml`. Конфигурация должна быть такой:
+### Telegram Delivery Constraint
+
+Файлы ~50–60 КБ и более (например, `manuscript_fixed.md` ~124 КБ) могут не проходить через Telegram attachment API из-за серверного таймаута Hermes, несмотря на лимит платформы в 50 МБ. Это систематический barrier.
+
+**Рабочие решения:** (1) отчёт о правках (report.md) отправляется, файл — по запросу; (2) GitHub — запушить, отправить ссылку; (3) `/root/outputs/filename.md` — явный путь в ответе. Все финальные файлы копировать в `/root/outputs/`. Если файл не доставлен — явно указать путь.
+
+### Expansion is always needed — plan for it
 
 **`~/.hermes/config.yaml`:**
 ```yaml
@@ -907,6 +1536,18 @@ curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
 **Лимит параллельных субагентов:** `max_concurrent_children: 3` (default). 2–3 главы на одного субагента — оптимально для избежания таймаутов.
 
 ## Publishing and Maintaining the Pipeline Repository
+
+### Skill evolution policy
+
+When improving `nonfiction-book-pipeline` itself, treat the current skill as a **production engine** unless the user explicitly asks for a rewrite. Prefer additive upgrades over destructive redesign:
+
+1. audit the existing flow first;
+2. preserve the working backbone (`Foundation → Drafting → Expansion → Assembly`);
+3. add new governance/control layers as templates, references, or clearly scoped sections;
+4. avoid broad deletions while the skill is still serving live book work;
+5. verify the new support files appear in `skill_view()` linked files before declaring success.
+
+This is the default maintenance posture for NFP: improve safely, then test on a small book/project before attempting cleanup or deeper refactors.
 
 ### README / repository-state audit
 
