@@ -20,7 +20,7 @@ Parse the review into categories:
 Priority order:
 critical factual > terminology > overclaiming > structure > reconstruction > style > proofreading > production.
 
-## 2. Five-pass closeout
+## 2. Six-pass closeout
 
 ### Pass 1 — Structural coherence
 - chapter order
@@ -44,13 +44,23 @@ critical factual > terminology > overclaiming > structure > reconstruction > sty
 - absolute firsts
 - direct influence claims
 
-### Pass 4 — Style cooling
+### Pass 4 — Russian Norm Check
+- spelling
+- punctuation
+- quotation marks
+- dashes and hyphenation
+- abbreviations and acronyms
+- dates and numbers
+- transliteration
+- terminology consistency
+
+### Pass 5 — Style cooling
 - modern office/tech metaphors
 - repeated authorial intensifiers
 - sensational formulas
 - unsupported poetic certainty
 
-### Pass 5 — Production
+### Pass 6 — Production
 - headings
 - duplicate sections
 - word count

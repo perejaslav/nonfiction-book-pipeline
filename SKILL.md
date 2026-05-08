@@ -44,11 +44,11 @@ memory:
 
 ## Обзор
 
-NFP — это многостадийный pipeline для создания длинных научно-популярных текстов (книг 60–80K слов) с помощью параллельных субагентов. Он разбивает задачу на 6 этапов: **Intake → Foundation → Drafting → Expansion → Russian AI-Style Cleanup → Assembly**, каждый из которых производит конкретные артефакты на диске.
+NFP — это многостадийный pipeline для создания длинных научно-популярных текстов (книг 60–80K слов) с помощью параллельных субагентов. Он разбивает задачу на 7 этапов: **Intake → Foundation → Drafting → Expansion → Russian AI-Style Cleanup → Russian Norm Check → Assembly**, каждый из которых производит конкретные артефакты на диске.
 
 NFP остаётся **production engine** для длинного нонфикшна, но поверх него работает **editorial governance layer**: явные operating modes, intake contract, chapter-level evidence packs, resource-safe fallback, защита авторского замысла и два режима редакторского контроля. Это улучшает управляемость pipeline, не ломая сильные стороны foundation/drafting/expansion.
 
-**User workflow preference (Slawix):** for NFP book work, default to **NFP-only + delegate_task subagents**, not Kanban. Do not load or use `kanban-orchestrator` unless the user explicitly asks for Kanban. If Kanban was accidentally considered and the user says “stop” / “don’t use kanban-orchestrator”, immediately continue in NFP-only mode without asking for a restart.
+**Pipeline routing rule (Slawix):** explicit user instruction has absolute priority. If the user says “используй Kanban”, “через Kanban”, or “Kanban pipeline”, MUST route to `nonfiction-book-pipeline-kanban`. If the user says “не используй Kanban”, “без Kanban”, “NFP-only”, “без доски”, or “через субагентов без доски”, MUST use this classic `nonfiction-book-pipeline` and MUST NOT start Kanban. If there is no explicit Kanban/no-Kanban instruction: new end-to-end book project → Kanban pipeline; existing manuscript/editorial repair/export/micro-final/fallback → classic NFP.
 
 **Full-book delivery expectation:** when the user provides a detailed book plan/synopsis and asks to “write the book”, do not stop at a compressed sample-length draft. Treat the plan’s target word count as binding unless the user explicitly asks for a short version. If the first draft is far below target, immediately enter chapter-by-chapter Expansion with linked subagents, verify word counts after each wave, and continue until the manuscript is within the requested range (or at least clearly near it and documented). For Telegram delivery, copy the final `.md` to `/root/outputs/` and attach it with `MEDIA:/absolute/path` in the same response.
 
@@ -98,6 +98,8 @@ Foundation — thesis.md, structure.md, chapter_map.md, voice.md, terms.md, fact
     Expansion — доработка отсутствующих/коротких глав с опорой на word_count_plan.md
     ↓
     Russian AI-Style Cleanup — detect-first, точечная чистка русскоязычных глав
+    ↓
+    Russian Norm Check — strict language pass: spelling, punctuation, quotes, dashes, abbreviations, dates, numbers, transliteration, terminology
     ↓
     Assembly / Editorial — сборка manuscript.md, optional approval-gated revision, PDF
 ```
@@ -1053,22 +1055,24 @@ NFP поддерживает два режима поздней редактор
 
 **Структурный review pitfall:** если критик говорит «не расширять, а сжать, переставить, усилить конфликт», не запускать обычный Expansion. Субагенты могут чрезмерно урезать главы или переписать полезный материал; лидер обязан сверить word count до/после и восстановить из backup всё, что ушло за пределы заданного сокращения.
 
-### Five-pass final editing protocol (post-review editing)
+### Six-pass final editing protocol (post-review editing)
 
-Финальная редактура исторического научпопа проходит не одним «улучши текст», а пятью разными проходами. Применять после получения редакторской рецензии (8–8.5/10) — до выхода на целевой уровень 8.8–9.1/10:
+Финальная редактура исторического научпопа проходит не одним «улучши текст», а шестью разными проходами. Применять после получения редакторской рецензии (8–8.5/10) — до выхода на целевой уровень 8.8–9.1/10:
 
 1. **T1 — Technical cleanup:** pipe-строки (` | `), LaTeX-артефакты (`\newpage`, `\thispagestyle`, bridge, header, span, removed), CJK-символы, mixed-script transitions, placeholder'ы `(факт XX_XX)`.
 2. **T2 — Factual review:** возраст исторических лиц, точные цифры, титулы и термины, цитаты, даты, хронология. Сверка с facts.json и entities.md.
 3. **T3 — Stylistic cooling:** убрать «важно понимать», «показывает нечто важное», дубли «мозаикой», лишние «не просто... а...», публицистические перегрузки.
-4. **T4 — Final third strengthening:** для книг с нарративным финалом (войны, империи, кризисы) — усилить драматургию последних глав. Ключевые точки: (a) центральная идея должна быть проговориваема в финале — «империя пала не потому что слабая, а потому что...»; (b) финальный абзац вводит новую глубину, а не повторяет; (c) если книга об империи — в финале должен быть парадокс: почему система, созданная для устойчивости, всё же сломалась.
-5. **T5 — Heading standardization:** убрать `§` из подзаголовков, выровнять формат (`## N. Текст`), удалить `---` разделители (кроме намеренного перед финальным курсивным блоком), сгладить мосты между главами.
-6. **T6 — Final assembly:** финальная чистка артефактов (скрипт выше), пересчёт слов, отправка файла. **Для Telegram** — отправлять `.md` файл напрямую (MEDIA: path), а не PDF. PDF собирать только по отдельному запросу.
+4. **T4 — Russian Norm Check:** орфография, пунктуация, кавычки, тире, аббревиатуры, даты, числа, транслитерация, единообразие терминов.
+5. **T5 — Final third strengthening:** для книг с нарративным финалом (войны, империи, кризисы) — усилить драматургию последних глав. Ключевые точки: (a) центральная идея должна быть проговориваема в финале — «империя пала не потому что слабая, а потому что...»; (b) финальный абзац вводит новую глубину, а не повторяет; (c) если книга об империи — в финале должен быть парадокс: почему система, созданная для устойчивости, всё же сломалась.
+6. **T6 — Heading standardization:** убрать `§` из подзаголовков, выровнять формат (`## N. Текст`), удалить `---` разделители (кроме намеренного перед финальным курсивным блоком), сгладить мосты между главами.
+7. **T7 — Final assembly:** финальная чистка артефактов (скрипт выше), пересчёт слов, отправка файла. **Для Telegram** — отправлять `.md` файл напрямую (MEDIA: path), а не PDF. PDF собирать только по отдельному запросу.
 
-Не смешивать все пять проходов в одном субагентском задании: это повышает риск структурных поломок.
+Не смешивать все шесть проходов в одном субагентском задании: это повышает риск структурных поломок.
 
 ### Post-Editing Artifact Patterns (live lessons from book sessions)
 
 - `references/literary-critique-checklist.md` — concise rubric for publication-readiness reviews: opening/middle/ending pass, repetition audit, structural blockers, and prioritized repair plan.
+- `references/russian-norm-check.md` — strict Russian-language norms checklist for late-stage review.
 - `references/file-presence-checks.md` — quick filesystem verification recipe for user questions like “is the file on disk?”; check the exact path before reporting manuscript status.
 
 После нескольких сессий редактуры обнаружены дополнительные паттерны артефактов, не покрытые общей чисткой:

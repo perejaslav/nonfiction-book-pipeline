@@ -5,7 +5,7 @@ Use this when the user asks for a manuscript review “as a literary critic” /
 ## Workflow
 1. Read opening, middle, and ending separately.
 2. Scan for repeated phrases and repeated ideas before writing prose feedback.
-3. Check heading hierarchy and any editor/working markers that should not survive to publication.
+3. Check heading hierarchy, Russian Norm Check issues, and any editor/working markers that should not survive to publication.
 4. Distinguish:
    - strong core concept;
    - repeat-heavy passages;
