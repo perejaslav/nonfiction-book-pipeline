@@ -568,6 +568,18 @@ NFP не становится универсальным skill для всех �
 - Отсутствующих глав — написать с нуля, указав цель
 - Недобравших глав — прочитать существующий текст, определить пробелы по structure.md, дописать новые разделы в **конец** файла. Важно: передать субагенту путь к существующему файлу и явно запретить удалять существующий текст.
 
+### 3.5 User checkpoint: after Chapter 1
+
+**Единственная обязательная точка контроля пользователя.** После написания Введения + Главы 1 — приостановить автоматический конвейер и предъявить их пользователю.
+
+- **Если OK** — пользователь подтверждает тон, стиль, глубину и направление. Продолжить автономно до финала.
+- **Если правки** — пользователь вносит замечания. Обновить `foundation/voice.md` и `foundation/chapter_map.md` в соответствии с ними. Затем продолжить.
+- **Если пользователь молчит или не отвечает** — записать допущение в `foundation/assumptions.md` и продолжить в режиме Full Auto.
+
+Этот checkpoint — единственный обязательный. Все последующие этапы (Expansion, Assembly, Editorial) выполняются автономно, без пошагового подтверждения.
+
+Применимо ко всем Operating Modes, кроме Sequential Safe Mode (где каждая глава показывается пользователю по умолчанию).
+
 ---
 
 ## Этап 4. Expansion & Verification (она же Волна 2)
@@ -1266,34 +1278,21 @@ These two boundary chapters (last of Part V, last of Part VI) consistently land 
 
 ## Питфоллы
 
-0. **Subagent-делегация: диагностика и workaround (актуально на 2026-05-02).** `delegate_task` может возвращать `HTTP 404 — Not Found | opencode` по двум независимым причинам:
-
-   **Причина 1 (транспортная):** `_resolve_delegation_credentials` вызывается БЕЗ `target_model`, что для провайдера `opencode-go` ведёт к неправильному `api_mode = anthropic_messages` и `base_url = https://opencode.ai/zen/go` (без `/v1`). Запрос попадает на эндпоинт Anthropic-совместимого API, который возвращает 404 + HTML.
-   
-   **Причина 2 (reasoning-модель):** `deepseek-v4-flash` — reasoning-модель. Без `{"thinking":{"type":"disabled"}}` весь ответ кладётся в `reasoning_content`, а `content` остаётся пустым. Парсер Hermes получает пустую строку → ошибка парсинга.
-
-   **Рабочий workaround (подтверждён 2026-05-02):** В `~/.hermes/config.yaml` добавить секцию `delegation` с явным `base_url`:
-   ```yaml
-   delegation:
-     base_url: 'https://opencode.ai/zen/go/v1'
-   ```
-   При наличии `delegation.base_url` функция `_resolve_delegation_credentials` полностью обходится — subagent сразу получает правильный `base_url`, `api_mode = chat_completions`, и HTTP-запрос уходит на нужный эндпоинт.
-   
-   Также в `~/.hermes/.env` должен быть установлен `OPENAI_API_KEY` (или `OPENCODE_GO_API_KEY`) с тем же ключом.
+0. **Subagent-делегация через opencode-go (актуально на 2026-05-12).** `delegate_task` использует `delegation.provider: opencode-go`, `delegation.model: deepseek-v4-flash`, `delegation.base_url: https://opencode.ai/zen/go/v1`. Секция `delegation.base_url` критична — без неё `_resolve_delegation_credentials` получает неправильный `api_mode` и `base_url`. API-ключ берётся из `OPENCODE_GO_API_KEY` в `~/.hermes/.env`.
 
    **Проверка работоспособности** (перед запуском NFP):
    ```bash
    source ~/.hermes/.env
    curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
-     -H "Authorization: Bearer $OPENAI_API_KEY" \
+     -H "Authorization: Bearer $OPENCODE_GO_API_KEY" \
      -H "Content-Type: application/json" \
      -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Say OK"}],"max_tokens":10,"thinking":{"type":"disabled"}}'
    ```
    Если в ответе `"content":"OK"` — subagent-делегация работает.
 
-   **Детальная диагностика и хронология:** `references/subagent-delegation-failure.md`
+   **Детальная диагностика:** `references/subagent-delegation-failure.md`
 
-   **Fallback (если workaround не сработал):** прямое написание через `execute_code` + `write_file`. Темп: 1 500–2 500 слов/вызов. Подробности — см. пункт Fallback ниже.
+   **Fallback (если delegate_task не сработал):** прямое написание через `execute_code` + `write_file`. Темп: 1 500–2 500 слов/вызов. Подробности — см. пункт Fallback ниже.
 
    **Fallback: по главе за раз, итеративное расширение.** Если `delegate_task` сломан ИЛИ пользователь явно попросил работать без субагентов — работаем напрямую через `execute_code`:
    1. Считать текущий word count. Если <99 % цели — писать дополнение в конец файла (`append` через `open(path, 'a')`, НЕ перезаписывать существующий текст).
@@ -1521,7 +1520,6 @@ delegation:
 
 **`~/.hermes/.env`:**
 ```
-OPENAI_API_KEY=sk-...        # тот же ключ, что и OPENCODE_GO_API_KEY
 OPENCODE_GO_API_KEY=sk-...
 ```
 
@@ -1531,7 +1529,7 @@ OPENCODE_GO_API_KEY=sk-...
 ```bash
 source ~/.hermes/.env
 curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Authorization: Bearer $OPENCODE_GO_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"TEST"}],"max_tokens":10,"thinking":{"type":"disabled"}}'
 ```
