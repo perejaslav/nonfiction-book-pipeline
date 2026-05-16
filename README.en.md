@@ -117,9 +117,10 @@ Hermes will then:
 2. Build the foundation — thesis, structure, voice guide, terms, facts
 3. For historical books, add `entities.md`, `fact_risk_map.md`, and `reconstruction_policy.md`
 4. Launch parallel subagents through Hermes `delegate_task` — each writes 2–3 chapters
-5. Check length and expand missing or short chapters
-6. Run factual spot-checks and clean language artifacts
-7. Assemble `manuscript.md` and, if Pandoc is installed, `book.pdf`
+5. **Present Introduction + Chapter 1 to the user for tone/style confirmation** (single checkpoint)
+6. Check length and expand missing or short chapters
+7. Run factual spot-checks, clean language artifacts, and **remove forbidden constructions**
+8. Assemble `manuscript.md` and, if Pandoc is installed, `book.pdf`
 
 ---
 
@@ -136,9 +137,9 @@ nonfiction-book-pipeline/
 
 More details:
 
-- `SKILL.md` — full skill definition and operating rules
-- `references/` — step-by-step procedures, checks, troubleshooting, and recommendations
-- `templates/` — templates for a new book project
+| `SKILL.md` — full skill definition (6 stages, 4 operating modes, 7 editorial passes)
+| `references/` — 40+ procedures: fact-checking, style cleanup, publishing, troubleshooting
+| `templates/` — 17 foundation templates: thesis, structure, voice, terms, facts, evidence gaps, continuity map, risk map, word count plan, transition anchors
 - `references/example-*.md` — example thesis and structure materials
 
 ---
@@ -236,6 +237,10 @@ pdftotext book.pdf - | head -60
 ## Where to read more
 
 - `SKILL.md` — full operating guide
+- `references/genre-narrative-patterns.md` — genre narrative patterns for chapters
+- `references/anti-ai-style-patterns.md` — forbidden constructions and template phrases
+- `references/manuscript-repetition-audit.md` — repetition audit and lexical detector
+- `references/evidence-pack-guide.md` — evidence packs and evidence gaps
 - `references/github-publish.md` — publishing workflow
 - `references/subagent-delegation-failure.md` — delegation workaround
 - `references/final-review-protocol.md` — final editing workflow

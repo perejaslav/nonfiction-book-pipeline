@@ -119,9 +119,10 @@ brew install pandoc texlive poppler
 2. Создаст foundation — тезис, план, voice-гид, термины, факты
 3. Для исторических книг добавит `entities.md`, `fact_risk_map.md` и `reconstruction_policy.md`
 4. Запустит параллельных субагентов через Hermes `delegate_task` — каждый пишет по 2–3 главы
-5. Проверит объём и доработает недостающие или короткие главы
-6. Проведёт фактологический spot-check и чистку языковых артефактов
-7. Соберёт `manuscript.md` и, если установлен pandoc, `book.pdf`
+5. **Предъявит пользователю Введение + Главу 1 для подтверждения тона и стиля** (единственная точка контроля)
+6. Проверит объём и доработает недостающие или короткие главы
+7. Проведёт фактологический spot-check, чистку языковых артефактов и **удаление запрещённых конструкций**
+8. Соберёт `manuscript.md` и, если установлен pandoc, `book.pdf`
 
 ---
 
@@ -138,9 +139,9 @@ nonfiction-book-pipeline/
 
 Подробнее:
 
-- `SKILL.md` — полное описание skill и его правил
-- `references/` — пошаговые процедуры, проверки, troubleshooting и рекомендации
-- `templates/` — шаблоны для нового проекта книги
+| `SKILL.md` — описание skill (6 этапов, 4 режима работы, 7 проходов редактуры)
+| `references/` — 40+ процедур и проверок: фактчекинг, чистка стиля, публикация, troubleshooting
+| `templates/` — 17 шаблонов foundation-файлов: тезис, структура, voice, термины, факты, evidence gaps, карта повторов, карта рисков, word count plan, переходные якоря
 - `references/example-*.md` — пример тезиса и структуры
 
 ---
@@ -238,6 +239,10 @@ pdftotext book.pdf - | head -60
 ## Где читать дальше
 
 - `SKILL.md` — полное рабочее руководство
+- `references/genre-narrative-patterns.md` — жанровые метапаттерны глав
+- `references/anti-ai-style-patterns.md` — запрещённые конструкции и шаблонные фразы
+- `references/manuscript-repetition-audit.md` — аудит повторов и лексический детектор
+- `references/evidence-pack-guide.md` — evidence packs и evidence gaps
 - `references/github-publish.md` — публикация и пуш в GitHub
 - `references/subagent-delegation-failure.md` — workaround для делегации
 - `references/final-review-protocol.md` — финальная редактура
