@@ -134,6 +134,7 @@ nonfiction-book-pipeline/
 ├── README.en.md              # Английская версия README
 ├── SKILL.md                  # Описание skill и правила работы
 ├── references/               # Сценарии, проверки и вспомогательные документы
+├── scripts/                  # Автоматизация: расчёт объёма, валидация манускрипта
 └── templates/                # Шаблоны для foundation
 ```
 
@@ -141,6 +142,7 @@ nonfiction-book-pipeline/
 
 | `SKILL.md` — описание skill (6 этапов, 4 режима работы, 7 проходов редактуры)
 | `references/` — 40+ процедур и проверок: фактчекинг, чистка стиля, публикация, troubleshooting
+| `scripts/` — автоматизация: `calc_word_count.py` (расчёт объёма), `validate_manuscript.py` (7-check валидация)
 | `templates/` — 17 шаблонов foundation-файлов: тезис, структура, voice, термины, факты, evidence gaps, карта повторов, карта рисков, word count plan, переходные якоря
 - `references/example-*.md` — пример тезиса и структуры
 
@@ -172,6 +174,12 @@ nonfiction-book-pipeline/
 - `foundation/terms.md`
 - `foundation/facts.json`
 
+Рассчитайте плановый объём автоматически:
+
+```bash
+python3 scripts/calc_word_count.py foundation/structure.md
+```
+
 Для исторических книг дополнительно нужны:
 
 - `foundation/entities.md`
@@ -202,9 +210,13 @@ nonfiction-book-pipeline/
 
 ### 5. Assembly
 
-Соберите `manuscript.md` и, если есть инструменты, сгенерируйте PDF.
+Соберите `manuscript.md`, проведите автоматическую валидацию и, если есть инструменты, сгенерируйте PDF.
 
 ```bash
+# Автоматическая валидация (7 проверок)
+python3 scripts/validate_manuscript.py manuscript.md
+
+# Сборка PDF
 pandoc \
   --standalone \
   --toc \
@@ -233,6 +245,7 @@ pdftotext book.pdf - | head -60
 - Держите задачи для субагентов короткими и контролируемыми: 2–3 главы на задачу.
 - Expansion — обязательная вторая волна, а не опциональный этап.
 - После expansion чистите смешанные языковые артефакты и перепроверяйте объём.
+- Перед выдачей manuscript.md запускайте `python3 scripts/validate_manuscript.py manuscript.md` — 7-check валидация.
 
 ---
 

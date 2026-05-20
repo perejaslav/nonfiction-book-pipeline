@@ -132,6 +132,7 @@ nonfiction-book-pipeline/
 ├── README.en.md              # English README
 ├── SKILL.md                  # Skill definition and operating rules
 ├── references/               # Supporting procedures and notes
+├── scripts/                  # Automation: word count calc, manuscript validation
 └── templates/                # Foundation templates
 ```
 
@@ -139,6 +140,7 @@ More details:
 
 | `SKILL.md` — full skill definition (6 stages, 4 operating modes, 7 editorial passes)
 | `references/` — 40+ procedures: fact-checking, style cleanup, publishing, troubleshooting
+| `scripts/` — automation: `calc_word_count.py` (word count calc), `validate_manuscript.py` (7-check validation)
 | `templates/` — 17 foundation templates: thesis, structure, voice, terms, facts, evidence gaps, continuity map, risk map, word count plan, transition anchors
 - `references/example-*.md` — example thesis and structure materials
 
@@ -170,6 +172,12 @@ Create the canonical project baseline:
 - `foundation/terms.md`
 - `foundation/facts.json`
 
+Auto-calculate the planned word count:
+
+```bash
+python3 scripts/calc_word_count.py foundation/structure.md
+```
+
 For historical books, also maintain:
 
 - `foundation/entities.md`
@@ -200,9 +208,13 @@ Review completeness, length, and factual risks:
 
 ### 5. Assembly
 
-Merge chapters into `manuscript.md`, then build PDF if the toolchain is available.
+Merge chapters into `manuscript.md`, run automatic validation, then build PDF if the toolchain is available.
 
 ```bash
+# Automatic validation (7 checks)
+python3 scripts/validate_manuscript.py manuscript.md
+
+# Build PDF
 pandoc \
   --standalone \
   --toc \
@@ -231,6 +243,7 @@ pdftotext book.pdf - | head -60
 - Prefer short, controlled subagent tasks: 2–3 chapters per task.
 - Expansion is a mandatory second wave, not an optional stage.
 - After expansion, clean mixed-language artifacts and verify word count.
+- Before delivering `manuscript.md`, run `python3 scripts/validate_manuscript.py manuscript.md` — 7-check validation.
 
 ---
 

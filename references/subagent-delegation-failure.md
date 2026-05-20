@@ -1,133 +1,56 @@
-# Subagent Delegation Failure — Диагностика и решение
+# Subagent Delegation — opencode-go + deepseek-v4-flash
 
-## Две независимые причины HTTP 404
+## Конфигурация (рабочая, с 2026-05-12)
 
-`delegate_task` с провайдером `opencode-go` может возвращать `HTTP 404 — Not Found | opencode` по двум разным причинам. Они независимы и могут сочетаться.
+`delegate_task` использует `provider: opencode-go`, `model: deepseek-v4-flash` с явным `base_url`.
 
----
+**Конфиг (`~/.hermes/config.yaml`):**
+```yaml
+delegation:
+  model: deepseek-v4-flash
+  provider: opencode-go
+  base_url: 'https://opencode.ai/zen/go/v1'   # ← критично
+  api_key: ''                                  # ← берётся из .env
+  max_iterations: 50
+  child_timeout_seconds: 900
+  reasoning_effort: low
+  max_concurrent_children: 3
+```
 
-## Причина 1: Неправильный base_url (транспортная)
+**Ключи (`~/.hermes/.env`):**
+```
+OPENCODE_GO_API_KEY=sk-...
+```
 
-**Симптом:** HTTP 404 + HTML-страница в теле ответа.
+## Ключевой момент: delegation.base_url
 
-**Механизм:** При вызове `delegate_task` → `_resolve_delegation_credentials(requested="opencode-go")` вызывается **без** параметра `target_model`. Для провайдера `opencode-go` это критично:
+Секция `delegation.base_url` обходит `_resolve_delegation_credentials` полностью. Без неё функция вызывается без `target_model` и получает неправильный `api_mode` + `base_url`:
 
-| Параметр | Без target_model | С target_model="deepseek-v4-flash" |
-|----------|-------------------|--------------------------------------|
+| Параметр | Без base_url | С base_url |
+|----------|-------------|------------|
 | `api_mode` | `anthropic_messages` | `chat_completions` |
 | `base_url` | `https://opencode.ai/zen/go` | `https://opencode.ai/zen/go/v1` |
 
-Запрос без `target_model` попадает на эндпоинт `/v1/messages` (Anthropic-совместимый), который возвращает 404 + HTML.
+Запрос без `/v1` попадает на Anthropic-совместимый эндпоинт и возвращает 404.
 
-**Решение (workaround):** В `~/.hermes/config.yaml`:
-```yaml
-delegation:
-  base_url: 'https://opencode.ai/zen/go/v1'
-```
-При наличии `delegation.base_url` функция `_resolve_delegation_credentials` обходится полностью — base_url и api_mode берутся напрямую из конфига.
+## DeepSeek reasoning
 
----
+`deepseek-v4-flash` — reasoning-модель. Без `{"thinking":{"type":"disabled"}}` весь ответ кладётся в `reasoning_content`, а `content` остаётся пустым. Hermes-код в `agent/transports/chat_completions.py` автоматически добавляет `thinking:disabled` для провайдера `opencode-go`.
 
-## Причина 2: Reasoning-модель возвращает пустой content
-
-**Симптом:** HTTP 200, ответ пришёл, но `content` пуст, `finish_reason: length`.
-
-**Механизм:** `deepseek-v4-flash` — reasoning-модель. По умолчанию весь ответ кладётся в проприетарное поле `reasoning_content`, а `content` остаётся пустым:
-
-```json
-{
-  "choices": [{
-    "message": {
-      "content": "",                    // ← ПУСТО
-      "reasoning_content": "Thinking..." // ← всё здесь
-    },
-    "finish_reason": "length"
-  }]
-}
-```
-
-Hermes Agent парсит ответ, ожидая текст в `content`, получает пустую строку → generic error или 404.
-
-**Решение:** Код в `agent/transports/chat_completions.py` (строки 327–331) уже содержит исправление:
-```python
-if provider_name == "opencode-go":
-    extra_body["thinking"] = {"type": "disabled"}
-```
-Это добавляет `"thinking":{"type":"disabled}"` в запрос, и модель возвращает ответ в `content`. Исправление работает автоматически при правильном `base_url` (Причина 1).
-
-**Диагностика:**
-```bash
-source ~/.hermes/.env
-curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"OK"}],"max_tokens":10}'
-```
-
-Без `thinking:disabled`: `"content":""`, `"finish_reason":"length"`
-С `thinking:disabled`: `"content":"OK"`, `"finish_reason":"stop"`
-
----
-
-## Комбинированная диагностика
+## Проверка работоспособности
 
 ```bash
 source ~/.hermes/.env
-
-# Тест 1: без thinking disabled (ожидаем пустой content = Причина 2)
-echo "=== Тест 1: без thinking disabled ==="
 curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Authorization: Bearer $OPENCODE_GO_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"ANSWER"}],"max_tokens":10}' \
-  | python3 -c "import sys,json; r=json.load(sys.stdin); print('content:', repr(r['choices'][0]['message'].get('content','')), 'finish:', r['choices'][0]['finish_reason'])"
-
-# Тест 2: с thinking disabled (ожидаем content = ANSWER)
-echo "=== Тест 2: с thinking disabled ==="
-curl -s -X POST https://opencode.ai/zen/go/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"ANSWER"}],"max_tokens":10,"thinking":{"type":"disabled"}}' \
-  | python3 -c "import sys,json; r=json.load(sys.stdin); print('content:', repr(r['choices'][0]['message'].get('content','')), 'finish:', r['choices'][0]['finish_reason'])"
+  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"OK"}],"max_tokens":10,"thinking":{"type":"disabled"}}'
 ```
 
-**Тест 1** должен показать пустой content (если показывает ANSWER — модель не reasoning и проблема в другом).
-**Тест 2** должен показать content = "ANSWER". Если нет — проверить API-ключ.
+Ожидаемый ответ: `"content":"OK"`, `finish_reason:"stop"`.
 
----
+## История
 
-## Что НЕ помогает
-
-- Смена модели на `kimi-k2.6`, `deepseek-chat` и т.д. (не решает проблему base_url)
-- Изменение `acp_command`, `acp_args`
-- Установка бинарника `copilot` (ACP-транспорт не используется при правильном base_url)
-
-## Что работает (актуально 2026-05-02, подтверждено)
-
-1. `~/.hermes/config.yaml` — секция `delegation.base_url`
-2. `~/.hermes/.env` — `OPENAI_API_KEY` с валидным ключом
-3. Субагент-делегация работает: 8 глав (4–11) книги «Глина и Звёзды» написаны за два последовательных батча
-
-## Хронология
-
-| Дата | Событие |
-|------|---------|
-| 2026-05-01 | Первые тесты `delegate_task` — HTTP 404; проверка ACP была ложным следом, потому что ACP не участвует в обычной субагентной делегации. |
-| 2026-05-02 AM | Пользователь находит root cause: `_resolve_delegation_credentials` без `target_model` → неправильный api_mode + base_url. |
-| 2026-05-02 AM | Применён workaround: `delegation.base_url` в config.yaml. |
-| 2026-05-02 AM | Дополнительная проблема: `deepseek-v4-flash` reasoning → пустой content. |
-| 2026-05-02 AM | Код `chat_completions.py` уже содержит `{"thinking":{"type":"disabled"}}` для opencode-go. Работает при правильном base_url. |
-| 2026-05-02 AM | Батч 1 (главы 4–6) — успех. |
-| 2026-05-02 AM | Батч 2 (главы 7–9) — успех. |
-| 2026-05-02 AM | Батч 3 (главы 10–11) — успех. |
-
-## Ключевой файл
-
-`agent/transports/chat_completions.py`, строки 327–331:
-```python
-# opencode.ai: top-level thinking parameter (not extra_body.reasoning)
-# deepseek-v4-flash and similar reasoning models need {"type":"disabled"}
-# to return content in the "content" field instead of "reasoning_content"
-if provider_name == "opencode-go":
-    extra_body["thinking"] = {"type": "disabled"}
-```
+- До 2026-05-12: делегирование не работало (HTTP 404, отсутствие `base_url`)
+- 2026-05-12, попытка 1: переключено на minimax-m2.5 (работало, но модели пишут хуже)
+- 2026-05-12, попытка 2: возвращено на opencode-go + deepseek-v4-flash с явным `base_url` — работает
