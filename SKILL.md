@@ -273,6 +273,14 @@ JSON-массив ключевых фактов с полями:
 ### 2.7C word_count_plan.md
 Основной управляющий артефакт объёма: planned words, drafted words, deficit/surplus, expansion status, final status по каждой главе.
 
+**Авто-расчёт объёма.** Скрипт `scripts/calc_word_count.py` парсит `structure.md`, определяет тип каждой главы по ключевым словам, применяет формулу `baseline × density multiplier` и выводит заполненный план с диапазонами. Запуск:
+
+```bash
+python3 scripts/calc_word_count.py foundation/structure.md
+```
+
+Результат — таблица с типом, плотностью и диапазоном слов по каждой главе + суммарный объём. Шаблон: `templates/word_count_plan.md`.
+
 ### 2.7D Evidence Packs
 
 Для research-heavy глав создать каталог:
@@ -735,6 +743,27 @@ print(f"Китайские: {chinese}, Латинские: {latin_phrases}")
 2. `\newpage` между главами
 3. `\part*` перед каждой частью
 4. TOC (оглавление) — `--toc`
+
+### 5.1A Валидация манускрипта (ОБЯЗАТЕЛЬНО перед выдачей)
+
+Перед отправкой manuscript.md пользователю или сборкой PDF — запустить автоматическую валидацию:
+
+```bash
+python3 scripts/validate_manuscript.py manuscript.md
+```
+
+Скрипт проверяет 7 пунктов:
+1. **Orphaned footnotes** — все `[^N]` ссылки имеют определение
+2. **Service tags** — нет `[FACT-CHECK]`, `[TODO]`, `[DRAFT]`, `[UNVERIFIED]`
+3. **Empty sections** — нет двух заголовков подряд без контента
+4. **Chapter presence** — все главы из оглавления существуют в тексте
+5. **Service comments** — нет служебных маркеров агента
+6. **Bibliography** — разделение на «Проверенные» / «Требующие верификации»
+7. **Evidence gaps** — `evidence_gaps.md` не содержит записей с риском ВЫСОКИЙ
+
+**Результат:** `✅ PASS` или `❌ FAIL` с деталями. Exit code 0 = pass, 1 = fail.
+
+Если FAIL — исправить проблемы и повторить валидацию. Нельзя выдавать манускрипт с непройденной валидацией.
 
 ### 5.2 PDF / EPUB export
 
